@@ -1,0 +1,30 @@
+LeviBatone — Baritone-style pathfinding bot for Minecraft: Bedrock Edition
+
+Copyright (C) 2026 levibatone contributors
+
+This library is free software; you can redistribute it and/or modify it under
+the terms of the GNU Lesser General Public License as published by the Free
+Software Foundation; version 3 of the License (see LICENSE).
+
+Third-party components and influences:
+
+* Baritone (https://github.com/cabaletta/baritone) — LGPL-3.0.
+  The pathfinding cost model (ActionCosts), movement taxonomy, goal types,
+  default settings, and command surface are ported from Baritone. This project
+  is a derivative work of Baritone's design and is therefore licensed under
+  LGPL-3.0.
+
+* BedrockTools (https://github.com/QYCottage/BedrockTools) — MIT License.
+  Source of the verified Minecraft 1.26.60 (arm64) signature patterns, class
+  offsets, vtable slots, and the MoveInputComponent layout used by the SDK
+  layer in include/levibatone/sdk/ and src/core/.
+
+* LiteLDev/preloader-android (https://github.com/LiteLDev/preloader-android) —
+  the LeviLauncher native mod runtime; headers only, linked at runtime.
+
+* resources/minecraft.ttf — Minecraft font, bundled for HUD overlay text
+  (same as BedrockTools' approach). Property of Mojang/Microsoft; use is
+  subject to the Minecraft EULA. Not covered by this project's license.
+
+* fmt (https://github.com/fmtlib/fmt) and entt (https://github.com/skypjack/entt)
+  — build-time dependencies, not distributed in the .levipack.
