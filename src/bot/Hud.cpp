@@ -1,5 +1,6 @@
 #include "Hud.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -7,22 +8,28 @@
 
 #include <pl/ModMenu.hpp>
 
+#include "../core/GameActions.hpp"
+#include "../core/GameHooks.hpp"
 #include "Bot.hpp"
 #include "Settings.hpp"
 #include "levibatone/Version.hpp"
+#include "levibatone/sdk/world/Actor.hpp"
 
 namespace levibatone::bot {
 
 namespace {
 
 constexpr const char *kModuleId = "levibatone.status";
+constexpr const char *kDebugModuleId = "levibatone.debug";
 constexpr const char *kStopButtonId = "levibatone.stop";
 constexpr const char *kCommandKey = "command";
 constexpr const char *kShowKey = "show";
 constexpr const char *kFontId = "levibatone.font";
 
 bool gShow = true;
+bool gDebugShow = false;
 std::string gLastCommand;
+sdk::Player *gDebugPlayer = nullptr;
 
 std::vector<unsigned char> readFileBytes(const std::string &path) {
     std::ifstream file(path, std::ios::binary);
@@ -93,6 +100,14 @@ bool Hud::enable(const std::string &modId, const std::string &fontPath) {
         return false;
     }
 
+    pl::modmenu::ModuleBuilder(kDebugModuleId, "LeviBatone Debug")
+        .modId(modId)
+        .description("Live engine probe: turn-delta semantics, state vector, "
+                     "actor flag bits. Used to verify offsets for elytra.")
+        .defaultEnabled(false)
+        .onToggle([](std::string_view, bool enabled) { gDebugShow = enabled; })
+        .registerModule();
+
     return pl::modmenu::ButtonBuilder(kStopButtonId, "Stop Bot")
         .modId(modId)
         .moduleId(kModuleId)
@@ -107,9 +122,89 @@ bool Hud::enable(const std::string &modId, const std::string &fontPath) {
 void Hud::disable() {
     pl::modmenu::unregisterButton(kStopButtonId);
     pl::modmenu::unregisterModule(kModuleId);
+    pl::modmenu::unregisterModule(kDebugModuleId);
 }
 
-void Hud::tick() {
+void Hud::renderDebug(sdk::Player *player) {
+    if (!gDebugShow || !player) return;
+
+    std::vector<pl::modmenu::DrawCommand> commands;
+    float y = 220.0f;
+    auto line = [&](const std::string &text, std::uint32_t color) {
+        commands.push_back(textLine(12.0f, y, text, color));
+        y += 14.0f;
+    };
+
+    const sdk::Vec3 pos = player->position();
+    const sdk::Vec2 rot = player->rotation();
+    line("pos " + std::to_string(pos.x) + " " + std::to_string(pos.y) + " " + std::to_string(pos.z),
+         0xFFFFFFFF);
+    line("rot pitch " + std::to_string(rot.x) + " yaw " + std::to_string(rot.y), 0xFFFFFFFF);
+
+    // State vector component: pos at +0, then two more Vec3s (old pos / velocity?).
+    if (auto *component = *reinterpret_cast<void ***>(
+            reinterpret_cast<std::uintptr_t>(player) + sdk::offsets::Actor::mStateVectorComponent)) {
+        for (int i = 0; i < 3; ++i) {
+            const sdk::Vec3 v = sdk::field<sdk::Vec3>(component, static_cast<std::size_t>(i) * 12);
+            line("vec" + std::to_string(i) + " " + std::to_string(v.x) + " " + std::to_string(v.y) +
+                     " " + std::to_string(v.z),
+                 i == 2 ? 0xFF55FFFF : 0xFFAAAAAA);
+        }
+    }
+
+    // Actor data flags (data item id 0, u64 value) — watch which bit moves.
+    void *wrapper = sdk::field<void *>(player, sdk::offsets::Actor::mEntityDataProbe);
+    if (wrapper) {
+        void *component = sdk::field<void *>(wrapper, 0);
+        if (component) {
+            auto **begin = sdk::field<void **>(component, 0);
+            auto **end = sdk::field<void **>(component, sizeof(void *));
+            if (begin && end && end > begin) {
+                const std::size_t count = static_cast<std::size_t>(end - begin);
+                if (count > 0 && begin[0]) {
+                    const auto item = reinterpret_cast<std::uintptr_t>(begin[0]);
+                    const std::uint8_t type = sdk::field<std::uint8_t>(begin[0], 0x8);
+                    const std::uint64_t flags = sdk::field<std::uint64_t>(begin[0], 0xC);
+                    line("flags id0 type=" + std::to_string(static_cast<int>(type)) +
+                             " items=" + std::to_string(count),
+                         0xFFAAAAAA);
+                    for (int half = 0; half < 2; ++half) {
+                        std::string bits;
+                        for (int b = 31; b >= 0; --b) {
+                            bits += ((flags >> (half * 32 + b)) & 1ULL) ? '1' : '0';
+                        }
+                        line((half == 0 ? "f63..32 " : "f31..00 ") + bits, 0xFF55FF55);
+                    }
+                }
+            }
+        }
+    }
+
+    // Turn-delta semantics probe.
+    const core::TurnObservation obs = core::lastTurnObservation();
+    if (obs.valid) {
+        line("turn arg dP " + std::to_string(obs.arg.x) + " dY " + std::to_string(obs.arg.y),
+             0xFFFFFF55);
+        line("turn diff " + std::to_string(obs.diff.x) + " " + std::to_string(obs.diff.y),
+             0xFFFFFF55);
+        const bool same = std::abs(obs.arg.x - obs.diff.x) < 0.01f &&
+                          std::abs(obs.arg.y - obs.diff.y) < 0.01f;
+        const bool sameMagnitude = std::abs(std::abs(obs.arg.x) - std::abs(obs.diff.x)) < 0.01f &&
+                                   std::abs(std::abs(obs.arg.y) - std::abs(obs.diff.y)) < 0.01f;
+        line(same ? "verdict: DELTA (arg == rotation change)"
+             : sameMagnitude ? "verdict: ABSOLUTE-SET (sign flip?)"
+                             : "verdict: unclear (move the camera by touch)",
+             same ? 0xFF55FF55 : 0xFFAA5555);
+    } else {
+        line("turn probe: move the camera by touch", 0xFFAAAAAA);
+    }
+
+    pl::modmenu::submitDrawCommands(kDebugModuleId, commands);
+}
+
+void Hud::tick(sdk::Player *player) {
+    gDebugPlayer = player;
+    renderDebug(player);
     if (!gShow) return;
 
     Bot &bot = Bot::get();

@@ -16,6 +16,7 @@ inline constexpr std::size_t mGuiData = 0x648;
 
 namespace Actor {
 inline constexpr std::size_t mEntityContext = 0x8;
+inline constexpr std::size_t mEntityDataProbe = 0x140; // SynchedActorData wrapper (BedrockTools)
 inline constexpr std::size_t mLevel = 0x1F0;
 inline constexpr std::size_t mDimension = 0x1E0;
 inline constexpr std::size_t mStateVectorComponent = 0x228;

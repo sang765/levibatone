@@ -12,6 +12,7 @@
 #include "levibatone/sdk/Signatures.hpp"
 #include "levibatone/sdk/client/ClientInstance.hpp"
 #include "levibatone/sdk/world/Actor.hpp"
+#include "../bot/Hud.hpp"
 
 namespace levibatone::core {
 
@@ -29,6 +30,7 @@ using UseItemOnFn = std::uint8_t (*)(void *, void *, const void *, std::uint8_t,
                                      std::uint32_t, const void *, bool);
 using AttackFn = bool (*)(void *, void *, bool, const void *);
 using InteractFn = bool (*)(void *, void *, const void *, std::uint32_t);
+using TurnDeltaFn = void (*)(sdk::Actor *, const sdk::Vec2 &);
 
 // Function pointer type erased for GameActions storage.
 NormalTickFn tickOriginal = nullptr;
@@ -48,6 +50,7 @@ InteractFn survivalModeInteractOriginal = nullptr;
 
 // Signature ids paired with each hook, in the same order as kHookTargets.
 constexpr memory::SignatureId kHookTargets[] = {
+    memory::SignatureId::LocalPlayerApplyTurnDelta,
     memory::SignatureId::NormalTick,
     memory::SignatureId::ClientInstanceUpdate,
     memory::SignatureId::GameModeStartDestroyBlock,
@@ -69,6 +72,7 @@ std::atomic<void *> sClientInstance{nullptr};
 void tickDetour(void *actor) {
     levibatone::bot::Bot::get().onTick(reinterpret_cast<sdk::Player *>(actor));
     if (tickOriginal) tickOriginal(actor);
+    levibatone::bot::Hud::tick(reinterpret_cast<sdk::Player *>(actor));
 }
 
 void *clientUpdateDetour(void *clientInstance, bool value) {
@@ -155,42 +159,62 @@ bool survivalModeInteractDetour(void *gameMode, void *target, const void *pos, s
     return survivalModeInteractOriginal(gameMode, target, pos, mode);
 }
 
+TurnDeltaFn turnDeltaOriginal = nullptr;
+std::mutex gTurnMutex;
+TurnObservation gTurnObservation;
+
+void turnDeltaDetour(sdk::Actor *actor, const sdk::Vec2 &arg) {
+    if (actor) {
+        const sdk::Vec2 before = actor->rotation();
+        if (turnDeltaOriginal) turnDeltaOriginal(actor, arg);
+        const sdk::Vec2 after = actor->rotation();
+        std::lock_guard lock(gTurnMutex);
+        gTurnObservation.valid = true;
+        gTurnObservation.arg = arg;
+        gTurnObservation.diff = {after.x - before.x, after.y - before.y};
+        return;
+    }
+    if (turnDeltaOriginal) turnDeltaOriginal(actor, arg);
+}
+
 void *detourFor(const std::size_t index) {
     switch (index) {
-    case 0: return reinterpret_cast<void *>(&tickDetour);
-    case 1: return reinterpret_cast<void *>(&clientUpdateDetour);
-    case 2: return reinterpret_cast<void *>(&gameModeStartDestroyDetour);
-    case 3: return reinterpret_cast<void *>(&survivalModeStartDestroyDetour);
-    case 4: return reinterpret_cast<void *>(&gameModeStopDestroyDetour);
-    case 5: return reinterpret_cast<void *>(&gameModeStartBuildDetour);
-    case 6: return reinterpret_cast<void *>(&survivalModeStartBuildDetour);
-    case 7: return reinterpret_cast<void *>(&gameModeUseItemDetour);
-    case 8: return reinterpret_cast<void *>(&survivalModeUseItemDetour);
-    case 9: return reinterpret_cast<void *>(&gameModeUseItemOnDetour);
-    case 10: return reinterpret_cast<void *>(&survivalModeUseItemOnDetour);
-    case 11: return reinterpret_cast<void *>(&gameModeAttackDetour);
-    case 12: return reinterpret_cast<void *>(&gameModeInteractDetour);
-    case 13: return reinterpret_cast<void *>(&survivalModeInteractDetour);
+    case 0: return reinterpret_cast<void *>(&turnDeltaDetour);
+    case 1: return reinterpret_cast<void *>(&tickDetour);
+    case 2: return reinterpret_cast<void *>(&clientUpdateDetour);
+    case 3: return reinterpret_cast<void *>(&gameModeStartDestroyDetour);
+    case 4: return reinterpret_cast<void *>(&survivalModeStartDestroyDetour);
+    case 5: return reinterpret_cast<void *>(&gameModeStopDestroyDetour);
+    case 6: return reinterpret_cast<void *>(&gameModeStartBuildDetour);
+    case 7: return reinterpret_cast<void *>(&survivalModeStartBuildDetour);
+    case 8: return reinterpret_cast<void *>(&gameModeUseItemDetour);
+    case 9: return reinterpret_cast<void *>(&survivalModeUseItemDetour);
+    case 10: return reinterpret_cast<void *>(&gameModeUseItemOnDetour);
+    case 11: return reinterpret_cast<void *>(&survivalModeUseItemOnDetour);
+    case 12: return reinterpret_cast<void *>(&gameModeAttackDetour);
+    case 13: return reinterpret_cast<void *>(&gameModeInteractDetour);
+    case 14: return reinterpret_cast<void *>(&survivalModeInteractDetour);
     }
     return nullptr;
 }
 
 void **originalFor(const std::size_t index) {
     switch (index) {
-    case 0: return reinterpret_cast<void **>(&tickOriginal);
-    case 1: return reinterpret_cast<void **>(&clientUpdateOriginal);
-    case 2: return reinterpret_cast<void **>(&gameModeStartDestroyOriginal);
-    case 3: return reinterpret_cast<void **>(&survivalModeStartDestroyOriginal);
-    case 4: return reinterpret_cast<void **>(&gameModeStopDestroyOriginal);
-    case 5: return reinterpret_cast<void **>(&gameModeStartBuildOriginal);
-    case 6: return reinterpret_cast<void **>(&survivalModeStartBuildOriginal);
-    case 7: return reinterpret_cast<void **>(&gameModeUseItemOriginal);
-    case 8: return reinterpret_cast<void **>(&survivalModeUseItemOriginal);
-    case 9: return reinterpret_cast<void **>(&gameModeUseItemOnOriginal);
-    case 10: return reinterpret_cast<void **>(&survivalModeUseItemOnOriginal);
-    case 11: return reinterpret_cast<void **>(&gameModeAttackOriginal);
-    case 12: return reinterpret_cast<void **>(&gameModeInteractOriginal);
-    case 13: return reinterpret_cast<void **>(&survivalModeInteractOriginal);
+    case 0: return reinterpret_cast<void **>(&turnDeltaOriginal);
+    case 1: return reinterpret_cast<void **>(&tickOriginal);
+    case 2: return reinterpret_cast<void **>(&clientUpdateOriginal);
+    case 3: return reinterpret_cast<void **>(&gameModeStartDestroyOriginal);
+    case 4: return reinterpret_cast<void **>(&survivalModeStartDestroyOriginal);
+    case 5: return reinterpret_cast<void **>(&gameModeStopDestroyOriginal);
+    case 6: return reinterpret_cast<void **>(&gameModeStartBuildOriginal);
+    case 7: return reinterpret_cast<void **>(&survivalModeStartBuildOriginal);
+    case 8: return reinterpret_cast<void **>(&gameModeUseItemOriginal);
+    case 9: return reinterpret_cast<void **>(&survivalModeUseItemOriginal);
+    case 10: return reinterpret_cast<void **>(&gameModeUseItemOnOriginal);
+    case 11: return reinterpret_cast<void **>(&survivalModeUseItemOnOriginal);
+    case 12: return reinterpret_cast<void **>(&gameModeAttackOriginal);
+    case 13: return reinterpret_cast<void **>(&gameModeInteractOriginal);
+    case 14: return reinterpret_cast<void **>(&survivalModeInteractOriginal);
     }
     return nullptr;
 }
@@ -216,14 +240,19 @@ bool installHooks() {
         if (!detour || !original) continue;
         if (pl::memory::hook(reinterpret_cast<void *>(address), detour, original) != 0) continue;
         kHookHandles[i] = detour;
-        if (i == 0) tickHooked = true;
-        if (i == 1) clientHooked = true;
+        if (i == 1) tickHooked = true;
+        if (i == 2) clientHooked = true;
     }
 
     // The tick hook is mandatory; interaction hooks are best-effort (they only
     // supply the GameMode instance for block breaking/placing).
     gInstalled = tickHooked;
     return gInstalled;
+}
+
+TurnObservation lastTurnObservation() {
+    std::lock_guard lock(gTurnMutex);
+    return gTurnObservation;
 }
 
 void uninstallHooks() {
