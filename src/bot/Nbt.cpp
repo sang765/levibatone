@@ -28,17 +28,30 @@ bool Reader::u8(std::uint8_t &out) {
 
 bool Reader::i16(std::int16_t &out) {
     if (mPos + 2 > mSize) return false;
-    out = static_cast<std::int16_t>(mData[mPos] | mData[mPos + 1] << 8);
+    if (mBigEndian) {
+        out = static_cast<std::int16_t>((mData[mPos] << 8) | mData[mPos + 1]);
+    } else {
+        out = static_cast<std::int16_t>(mData[mPos] | mData[mPos + 1] << 8);
+    }
     mPos += 2;
     return true;
 }
 
 bool Reader::i32(std::int32_t &out) {
     if (mPos + 4 > mSize) return false;
-    out = static_cast<std::int32_t>(static_cast<std::uint32_t>(mData[mPos]) |
-                                    static_cast<std::uint32_t>(mData[mPos + 1]) << 8 |
-                                    static_cast<std::uint32_t>(mData[mPos + 2]) << 16 |
-                                    static_cast<std::uint32_t>(mData[mPos + 3]) << 24);
+    std::uint32_t value = 0;
+    if (mBigEndian) {
+        value = static_cast<std::uint32_t>(mData[mPos]) << 24 |
+                static_cast<std::uint32_t>(mData[mPos + 1]) << 16 |
+                static_cast<std::uint32_t>(mData[mPos + 2]) << 8 |
+                static_cast<std::uint32_t>(mData[mPos + 3]);
+    } else {
+        value = static_cast<std::uint32_t>(mData[mPos]) |
+                static_cast<std::uint32_t>(mData[mPos + 1]) << 8 |
+                static_cast<std::uint32_t>(mData[mPos + 2]) << 16 |
+                static_cast<std::uint32_t>(mData[mPos + 3]) << 24;
+    }
+    out = static_cast<std::int32_t>(value);
     mPos += 4;
     return true;
 }
@@ -46,7 +59,10 @@ bool Reader::i32(std::int32_t &out) {
 bool Reader::i64(std::int64_t &out) {
     if (mPos + 8 > mSize) return false;
     std::uint64_t value = 0;
-    for (int i = 0; i < 8; ++i) value |= static_cast<std::uint64_t>(mData[mPos + i]) << (8 * i);
+    for (int i = 0; i < 8; ++i) {
+        const int shift = mBigEndian ? (56 - 8 * i) : (8 * i);
+        value |= static_cast<std::uint64_t>(mData[mPos + i]) << shift;
+    }
     out = static_cast<std::int64_t>(value);
     mPos += 8;
     return true;
@@ -222,6 +238,12 @@ bool Reader::readRoot(Value &out) {
 
 bool parseMcstructure(const std::uint8_t *data, std::size_t size, Value &root) {
     Reader reader(data, size);
+    return reader.readRoot(root);
+}
+
+bool parseNbt(const std::uint8_t *data, std::size_t size, bool bigEndian, Value &root) {
+    Reader reader(data, size);
+    reader.setBigEndian(bigEndian);
     return reader.readRoot(root);
 }
 

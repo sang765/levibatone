@@ -48,6 +48,9 @@ class Reader {
 public:
     Reader(const std::uint8_t *data, std::size_t size) : mData(data), mSize(size) {}
 
+    // .mcstructure BED NBT is little-endian; .litematic Java NBT is big-endian.
+    void setBigEndian(bool bigEndian) { mBigEndian = bigEndian; }
+
     bool readTag(std::uint8_t type, Value &out);
     // Reads the named root compound: 1 byte type + name, then payload.
     bool readRoot(Value &out);
@@ -56,6 +59,7 @@ private:
     const std::uint8_t *mData;
     std::size_t mSize;
     std::size_t mPos = 0;
+    bool mBigEndian = false;
 
     bool u8(std::uint8_t &out);
     bool i16(std::int16_t &out);
@@ -68,8 +72,10 @@ private:
     bool readPayload(std::uint8_t type, Value &out);
 };
 
-// Parses one .mcstructure; returns the root compound or nullptr on failure.
-// Caller owns the storage via the out parameter.
+// Parses one .mcstructure (uncompressed little-endian); returns the root compound.
 bool parseMcstructure(const std::uint8_t *data, std::size_t size, Value &root);
+
+// Parses an arbitrary NBT stream with an explicit endianness.
+bool parseNbt(const std::uint8_t *data, std::size_t size, bool bigEndian, Value &root);
 
 }

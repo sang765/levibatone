@@ -54,7 +54,7 @@ clang++ -std=c++20 -shared -fPIC -O2 -w \
     -I"$PRELOADER_INCLUDE" \
     $SOURCES \
     -L"$OUT_DIR" -lpreloader \
-    -llog \
+    -llog -lz \
     -Wl,--gc-sections \
     -Wl,--unresolved-symbols=ignore-all \
     -Wl,-z,max-page-size=16384 \

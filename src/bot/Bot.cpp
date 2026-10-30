@@ -13,6 +13,7 @@
 #include "levibatone/sdk/client/ClientInstance.hpp"
 #include "levibatone/sdk/world/Actors.hpp"
 #include "Nbt.hpp"
+#include "Litematic.hpp"
 
 namespace levibatone::bot {
 
@@ -261,7 +262,10 @@ std::vector<std::string> Bot::executeCommand(const std::string &line) {
     if (command == "build") {
         if (args.size() < 2) return {"usage: build <name.mcstructure>"};
         std::string file = args[1];
-        if (file.find(".mcstructure") == std::string::npos) file += ".mcstructure";
+        if (file.find(".mcstructure") == std::string::npos &&
+            file.find(".litematic") == std::string::npos) {
+            file += ".litematic";
+        }
         BlockPos origin = feetBlock(mLastTickPosition);
         ++mGeneration;
         mPendingPath.reset();
@@ -580,6 +584,22 @@ bool Bot::loadBuild(const std::string &file, const BlockPos &origin) {
     std::ifstream in(path, std::ios::binary);
     std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
                                     std::istreambuf_iterator<char>());
+
+    if (file.find(".litematic") != std::string::npos) {
+        std::vector<litematic::BlockCell> cells;
+        if (!litematic::parse(bytes.data(), bytes.size(), cells)) {
+            log("invalid .litematic (gzip/NBT/regions)");
+            return false;
+        }
+        mBuildCells.reserve(cells.size());
+        for (auto &cell : cells) {
+            mBuildCells.push_back({BlockPos{origin.x + cell.pos.x, origin.y + cell.pos.y,
+                                            origin.z + cell.pos.z},
+                                   cell.name});
+        }
+        return !mBuildCells.empty();
+    }
+
     nbt::Value root;
     if (!nbt::parseMcstructure(bytes.data(), bytes.size(), root)) {
         log("invalid .mcstructure NBT");

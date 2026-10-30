@@ -8,7 +8,7 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 - **mine** — find blocks by name in a radius, path to them and break them (`mine <block> [count]`), with unreachable-target blacklisting; scanning runs on a worker thread
 - **getto** — path to the nearest block of a type without breaking it (`getto <block>`)
 - **follow** — follow the nearest player (`follow`) or a player by name (`follow <name>`, matched against the player list name, color codes stripped)
-- **build** — place and clear cells from a Bedrock `.mcstructure` (name-matched, states ignored): put the file in the mod `data/` folder, stand where the structure origin should be, `!build <file>`. Holds your selected item for placement; breaks wrong blocks itself; bottom-up order
+- **build** — place and clear cells from a Bedrock `.mcstructure` or a Java `.litematic` (name-matched, block states ignored): put the file in the mod `data/` folder, stand where the structure origin should be, `!build <file>`. Holds your selected item for placement; breaks wrong blocks itself; bottom-up order
 - **Movements** — walk, diagonal (corner-cut safe), ascend (jump), fall (≤ 3 blocks, land in water allowed), mine-down, pillar (place under feet), bridge (sneak-place over gaps with a safe landing below), ladder up/down, swim up
 - **Block interaction** — breaks and places blocks through the game's own GameMode functions, honoring `allowBreak` / `allowPlace`
 - **Costs** — Baritone's exact ActionCosts model (walk 20/4.317, jump = fall(1.25) − fall(0.25), fall simulation, placement/break/jump penalties) and the 3.563 cost heuristic
@@ -32,7 +32,8 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 | `getto <block>` | Walk to the nearest block of a type without mining it |
 | `follow` | Follow the nearest player (keep `followRadius` distance) |
 | `follow <name>` | Follow the player whose name contains `<name>` |
-| `build <name.mcstructure>` | Build a structure from the mod `data/` folder at your position |
+| `build <name.mcstructure>` | Build a Bedrock structure from the mod `data/` folder at your position |
+| `build <name.litematic>` | Build a Java Litematica schematic (gzip NBT, palette auto-mapped to Bedrock names) |
 | `stop` / `cancel` | Cancel the bot |
 | `status` | Current mode, goal, path progress |
 | `set <key> <value>` | Change a setting |
