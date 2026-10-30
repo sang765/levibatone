@@ -50,8 +50,12 @@ private:
     bool applyInput(sdk::Player *player, const Input &input);
     void clearInput(sdk::Player *player);
     void lookAt(sdk::Player *player, const sdk::Vec3 &target, float maxStepYaw = 35.0f, float maxStepPitch = 30.0f);
+
+public:
+    // Turns the player toward a block and reports whether it is within reach.
     bool lookBlock(sdk::Player *player, const BlockPos &pos);
 
+private:
     bool breakBlock(sdk::Player *player, const BlockPos &pos, bool *instantlyBroke);
     void stopBreaking(sdk::Player *player, const BlockPos &pos);
     bool placeBlock(sdk::Player *player, const PlaceTask &task);

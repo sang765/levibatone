@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "id": "levibatone",
-  "version": "1.2.0",
-  "minecraft_versions": ["1.26.60.X"],
+  "version": "1.3.0",
+  "minecraft_versions": ["1.26.6*"],
   "info": {
     "name": "LeviBatone",
     "author": "levibatone contributors",
-    "description": "Baritone-style pathfinding bot for Minecraft Bedrock: goto, getto, mine, follow, A* pathing with walk/diagonal/ascend/descend/pillar/bridge/ladder/swim movements, block breaking and placing.",
+    "description": "Baritone-style pathfinding bot for Minecraft Bedrock: goto, getto, mine, follow, build (.mcstructure), A* pathing with walk/diagonal/ascend/descend/pillar/bridge/ladder/swim movements, block breaking and placing.",
     "homepage_url": "https://github.com/cabaletta/baritone",
     "icon": "assets/levibatone.png",
     "tags": ["Utility", "Pathfinding", "Bot"]

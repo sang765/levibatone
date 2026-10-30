@@ -31,7 +31,7 @@ for dep in third_party/fmt/include third_party/entt/src; do
     fi
 done
 
-SOURCES=$(find src -name '*.cpp' | sort)
+SOURCES=$(find src -name '*.cpp' ! -name 'test_*.cpp' | sort)
 
 mkdir -p "$OUT_DIR"
 

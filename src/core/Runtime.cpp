@@ -49,6 +49,7 @@ bool load() {
         std::error_code ec;
         std::filesystem::create_directories(self->getConfigDir(), ec);
         bot::Settings::get().loadStore(self->getConfigDir() / "settings.txt");
+        bot::Bot::get().setBuildDir(self->getDataDir());
         self->getLogger().info("LeviBatone {} loaded", std::string(Version));
     }
     return true;

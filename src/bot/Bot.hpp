@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -22,7 +23,7 @@ using sdk::BlockPos;
 // the game thread, and implements the command surface (#goto, #mine, ...).
 class Bot {
 public:
-    enum class Mode { Idle, Goto, GotoBlock, Mine, Follow };
+    enum class Mode { Idle, Goto, GotoBlock, Mine, Follow, Build };
 
     struct Message {
         std::string text;
@@ -50,6 +51,7 @@ public:
     int mineRemaining() const { return mMineRemaining; }
     std::vector<Message> messages();
     std::string miningTarget() const;
+    void setBuildDir(const std::filesystem::path &dir) { mBuildDir = dir; }
 
 private:
     Bot() = default;
@@ -63,6 +65,17 @@ private:
     void onPathFinished(sdk::Player *player);
     bool blacklisted(const BlockPos &pos) const;
     void beginDirectBreak(const BlockPos &pos);
+
+    // Builder (.mcstructure) state machine.
+    struct BuildCell {
+        BlockPos pos;
+        std::string name; // full name incl. namespace, or "minecraft:air"
+    };
+    bool loadBuild(const std::string &file, const BlockPos &origin);
+    void tickBuild(sdk::Player *player);
+    bool tickDirectPlace(sdk::Player *player);
+    void beginDirectPlace(const PlaceTask &task);
+    bool directBreakInReach(sdk::Player *player, const BlockPos &target);
 
     Mode mMode = Mode::Idle;
     std::optional<Goal> mGoal;
@@ -79,6 +92,18 @@ private:
     std::optional<BlockPos> mDirectBreakTarget;
     int mDirectBreakTicks = 0;
     std::atomic<std::uint32_t> mGeneration{0};
+
+    // Builder state.
+    std::filesystem::path mBuildDir;
+    std::vector<BuildCell> mBuildCells;
+    std::size_t mBuildCursor = 0;
+    std::string mBuildFile;
+    int mBuildPlaced = 0;
+    int mBuildBroken = 0;
+    int mBuildSkipped = 0;
+    int mBuildCooldown = 0;
+    std::optional<PlaceTask> mDirectPlaceTarget;
+    int mDirectPlaceTicks = 0;
 
     // Asynchronous block scan (worker thread) for mine / getto goals.
     struct ScanResult {

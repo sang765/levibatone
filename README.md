@@ -8,6 +8,7 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 - **mine** — find blocks by name in a radius, path to them and break them (`mine <block> [count]`), with unreachable-target blacklisting; scanning runs on a worker thread
 - **getto** — path to the nearest block of a type without breaking it (`getto <block>`)
 - **follow** — follow the nearest player (`follow`) or a player by name (`follow <name>`, matched against the player list name, color codes stripped)
+- **build** — place and clear cells from a Bedrock `.mcstructure` (name-matched, states ignored): put the file in the mod `data/` folder, stand where the structure origin should be, `!build <file>`. Holds your selected item for placement; breaks wrong blocks itself; bottom-up order
 - **Movements** — walk, diagonal (corner-cut safe), ascend (jump), fall (≤ 3 blocks, land in water allowed), mine-down, pillar (place under feet), bridge (sneak-place over gaps with a safe landing below), ladder up/down, swim up
 - **Block interaction** — breaks and places blocks through the game's own GameMode functions, honoring `allowBreak` / `allowPlace`
 - **Costs** — Baritone's exact ActionCosts model (walk 20/4.317, jump = fall(1.25) − fall(0.25), fall simulation, placement/break/jump penalties) and the 3.563 cost heuristic
@@ -30,6 +31,8 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 | `mine <block> [count]` | Find and mine blocks by name (`iron_ore` also matches `deepslate_iron_ore`) |
 | `getto <block>` | Walk to the nearest block of a type without mining it |
 | `follow` | Follow the nearest player (keep `followRadius` distance) |
+| `follow <name>` | Follow the player whose name contains `<name>` |
+| `build <name.mcstructure>` | Build a structure from the mod `data/` folder at your position |
 | `stop` / `cancel` | Cancel the bot |
 | `status` | Current mode, goal, path progress |
 | `set <key> <value>` | Change a setting |
@@ -37,7 +40,7 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 
 ## Settings (defaults = Baritone)
 
-`allowBreak=true`, `allowPlace=true`, `allowSprint=true`, `allowDownward=true`, `maxFallHeightNoWater=3`, `costHeuristic=3.563`, `blockPlacementPenalty=20`, `blockBreakAdditionalPenalty=2`, `jumpPenalty=2`, `walkOnWaterOnePenalty=3`, `mineGoalUpdateInterval=5`, `movementTimeoutTicks=100`, `maxNodes=15000`, `primaryTimeoutMs=300`, `failureTimeoutMs=1500`, `mineScanRadius=24`, `followRadius=3`, `followRange=30`, `followUpdateInterval=10`
+`allowBreak=true`, `allowPlace=true`, `allowSprint=true`, `allowDownward=true`, `maxFallHeightNoWater=3`, `costHeuristic=3.563`, `blockPlacementPenalty=20`, `blockBreakAdditionalPenalty=2`, `jumpPenalty=2`, `walkOnWaterOnePenalty=3`, `mineGoalUpdateInterval=5`, `movementTimeoutTicks=100`, `maxNodes=15000`, `primaryTimeoutMs=300`, `failureTimeoutMs=1500`, `mineScanRadius=24`, `followRadius=3`, `followRange=30`, `followUpdateInterval=10`, `exploreForBlocks=true`
 
 ## Build
 
@@ -60,11 +63,11 @@ Produces `build/liblevibatone.so` and `build/LeviBatone.levipack`.
 
 ## Compatibility
 
-Target: **Minecraft 1.26.60** (arm64-v8a) via LeviLauncher. All signature patterns were verified to resolve uniquely against a real 1.26.60.4 `libminecraftpe.so` with `verify/scan_fast.py` (point it at the extracted game library). Signatures and offsets come from the BedrockTools 1.26.60 SDK layer; other Minecraft versions are not covered by `minecraft_versions: ["1.26.60.X"]`.
+Target: **Minecraft 1.26.6X** (arm64-v8a, `1.26.6*`) via LeviLauncher. All signature patterns were verified to resolve uniquely against a real 1.26.60.4 `libminecraftpe.so` with `verify/scan_fast.py` (point it at the extracted game library). Signatures and offsets come from the BedrockTools 1.26.60 SDK layer; other Minecraft versions are not covered by `minecraft_versions: ["1.26.60.X"]`.
 
 ## Not ported (yet)
 
-Baritone has far more than the core; these are intentionally out of scope for v1: builder/schematics, farm, elytra, parkour and diagonal-descend movements, inventory/auto-tool management, cached-chunk pathing, and world-space path rendering. `mine` auto-explores toward unexplored ground when no target is in range (`exploreForBlocks`, up to 12 attempts). Settings persist to `config/settings.txt`.
+Baritone has far more than the core; the remaining pieces are intentionally out of scope: autotool (needs a verified hotbar selected-slot offset — guessing corrupts inventory), world-space path rendering (needs verified ViewProj matrix sources), chunk caching (not applicable: a client-side bot can only path inside loaded chunks), plus farm and elytra. The builder places the currently held item, not a per-cell palette — swap items manually for multi-material builds. `mine` auto-explores toward unexplored ground when no target is in range (`exploreForBlocks`, up to 12 attempts). Settings persist to `config/settings.txt`.
 
 ## Credits
 

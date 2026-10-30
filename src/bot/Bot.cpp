@@ -4,12 +4,15 @@
 #include <cctype>
 #include <cmath>
 #include <sstream>
+#include <filesystem>
+#include <fstream>
 
 #include "../core/GameActions.hpp"
 #include "Settings.hpp"
 #include "World.hpp"
 #include "levibatone/sdk/client/ClientInstance.hpp"
 #include "levibatone/sdk/world/Actors.hpp"
+#include "Nbt.hpp"
 
 namespace levibatone::bot {
 
@@ -93,6 +96,9 @@ std::string Bot::modeLabel() const {
         return "mine " + mMineTarget;
     case Mode::Follow:
         return "follow";
+    case Mode::Build:
+        return "build " + mBuildFile + " (" + std::to_string(mBuildCursor) + "/" +
+               std::to_string(mBuildCells.size()) + ")";
     }
     return "?";
 }
@@ -109,6 +115,9 @@ void Bot::stop() {
     mBlacklist.clear();
     mDirectBreakTarget.reset();
     mFollowTarget = nullptr;
+    mBuildCells.clear();
+    mBuildCursor = 0;
+    mDirectPlaceTarget.reset();
     mPendingPath.reset();
     mPendingScan.reset();
     mComputing = false;
@@ -122,7 +131,10 @@ void Bot::onWorldLeft() {
     mGoal.reset();
     mBlacklist.clear();
     mDirectBreakTarget.reset();
+    mDirectPlaceTarget.reset();
     mFollowTarget = nullptr;
+    mBuildCells.clear();
+    mBuildCursor = 0;
     mPendingPath.reset();
     mPendingScan.reset();
     mComputing = false;
@@ -244,6 +256,29 @@ std::vector<std::string> Bot::executeCommand(const std::string &line) {
         mFollowName = args.size() >= 2 ? toLower(args[1]) : "";
         log(mFollowName.empty() ? "following nearest player" : "following " + mFollowName);
         return {mFollowName.empty() ? "following nearest player" : "following " + mFollowName};
+    }
+
+    if (command == "build") {
+        if (args.size() < 2) return {"usage: build <name.mcstructure>"};
+        std::string file = args[1];
+        if (file.find(".mcstructure") == std::string::npos) file += ".mcstructure";
+        BlockPos origin = feetBlock(mLastTickPosition);
+        ++mGeneration;
+        mPendingPath.reset();
+        mPendingScan.reset();
+        mComputing = false;
+        mScanComputing = false;
+        mDirectBreakTarget.reset();
+        mDirectPlaceTarget.reset();
+        mBlacklist.clear();
+        mExecutor.reset();
+        if (!loadBuild(file, origin)) {
+            mMode = Mode::Idle;
+            return {"failed to load " + file + " (put it in the mod data folder)"};
+        }
+        mMode = Mode::Build;
+        log("building " + file + ": " + std::to_string(mBuildCells.size()) + " cells");
+        return {"building " + file};
     }
 
     if (command == "status") {
@@ -526,6 +561,216 @@ void Bot::updateFollowGoal(sdk::Player *player) {
     }
 }
 
+bool Bot::loadBuild(const std::string &file, const BlockPos &origin) {
+    namespace fs = std::filesystem;
+    mBuildCells.clear();
+    mBuildCursor = 0;
+    mBuildPlaced = 0;
+    mBuildBroken = 0;
+    mBuildSkipped = 0;
+    mBuildCooldown = 0;
+    mBuildFile = file;
+
+    std::error_code ec;
+    const fs::path path = mBuildDir / file;
+    if (!fs::exists(path, ec)) {
+        log("file not found: " + path.string());
+        return false;
+    }
+    std::ifstream in(path, std::ios::binary);
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+    nbt::Value root;
+    if (!nbt::parseMcstructure(bytes.data(), bytes.size(), root)) {
+        log("invalid .mcstructure NBT");
+        return false;
+    }
+    const nbt::Compound *rootObj = root.asCompound();
+    const auto sizeIt = rootObj ? rootObj->find("size") : rootObj->end();
+    const nbt::List *size = sizeIt != rootObj->end() ? sizeIt->second.asList() : nullptr;
+    if (!rootObj || !size || size->size() != 3) {
+        log("missing size in structure");
+        return false;
+    }
+    const int sx = (*size)[0].asInt(), sy = (*size)[1].asInt(), sz = (*size)[2].asInt();
+    if (sx <= 0 || sy <= 0 || sz <= 0 || static_cast<std::int64_t>(sx) * sy * sz > 100000) {
+        log("structure too large or invalid size");
+        return false;
+    }
+
+    const auto structureIt = rootObj->find("structure");
+    const nbt::Compound *structure = structureIt != rootObj->end() ? structureIt->second.asCompound() : nullptr;
+    const auto indicesIt = structure ? structure->find("block_indices") : structure->end();
+    const nbt::Compound *indices = indicesIt != structure->end() ? indicesIt->second.asCompound() : nullptr;
+    const auto dataIt = indices ? indices->find("data") : indices->end();
+    const nbt::List *layers = dataIt != indices->end() ? dataIt->second.asList() : nullptr;
+    const auto paletteIt = structure ? structure->find("palette") : structure->end();
+    const nbt::Compound *paletteRoot = paletteIt != structure->end() ? paletteIt->second.asCompound() : nullptr;
+    const auto defaultIt = paletteRoot ? paletteRoot->find("default") : paletteRoot->end();
+    const nbt::Compound *def = defaultIt != paletteRoot->end() ? defaultIt->second.asCompound() : nullptr;
+    const auto blockPaletteIt = def ? def->find("block_palette") : def->end();
+    const nbt::List *palette = blockPaletteIt != def->end() ? blockPaletteIt->second.asList() : nullptr;
+    if (!layers || layers->empty() || !palette) {
+        log("missing block_indices or block_palette");
+        return false;
+    }
+    const nbt::List *layer0 = (*layers)[0].asList();
+    if (!layer0) {
+        log("invalid block_indices layer");
+        return false;
+    }
+
+    mBuildCells.reserve(layer0->size());
+    for (std::size_t i = 0; i < layer0->size(); ++i) {
+        const std::int32_t index = (*layer0)[i].asInt(-1);
+        if (index < 0 || index >= static_cast<std::int32_t>(palette->size())) continue;
+        const nbt::Compound *entry = (*palette)[static_cast<std::size_t>(index)].asCompound();
+        const auto nameIt = entry ? entry->find("name") : entry->end();
+        const std::string *name = nameIt != entry->end() ? nameIt->second.asString() : nullptr;
+        if (!name || name->empty()) continue;
+        const int x = static_cast<int>(i % static_cast<std::size_t>(sx));
+        const int z = static_cast<int>((i / static_cast<std::size_t>(sx)) % static_cast<std::size_t>(sz));
+        const int y = static_cast<int>(i / (static_cast<std::size_t>(sx) * static_cast<std::size_t>(sz)));
+        mBuildCells.push_back({BlockPos{origin.x + x, origin.y + y, origin.z + z}, *name});
+    }
+
+    // Bottom-up, nearest first (Baritone buildInLayers, layerOrder=false).
+    std::sort(mBuildCells.begin(), mBuildCells.end(),
+              [](const BuildCell &a, const BuildCell &b) {
+                  if (a.pos.y != b.pos.y) return a.pos.y < b.pos.y;
+                  if (a.pos.x != b.pos.x) return a.pos.x < b.pos.x;
+                  return a.pos.z < b.pos.z;
+              });
+    return !mBuildCells.empty();
+}
+
+void Bot::beginDirectPlace(const PlaceTask &task) {
+    mDirectPlaceTarget = task;
+    mDirectPlaceTicks = 0;
+}
+
+bool Bot::tickDirectPlace(sdk::Player *player) {
+    if (!mDirectPlaceTarget) return false;
+    const PlaceTask task = *mDirectPlaceTarget;
+    const World &world = World::get();
+    if (world.isSolid(task.target)) {
+        ++mBuildPlaced;
+        ++mBuildCursor;
+        mDirectPlaceTarget.reset();
+        return true;
+    }
+    if (++mDirectPlaceTicks > Settings::get().getInt("movementTimeoutTicks", 100)) {
+        ++mBuildSkipped;
+        ++mBuildCursor;
+        mDirectPlaceTarget.reset();
+        log("cell skipped (place failed)");
+        return true;
+    }
+    if (mBuildCooldown > 0) --mBuildCooldown;
+    void *mode = core::actions.mode();
+    auto startBuild = core::actions.startBuild.load(std::memory_order_acquire);
+    if (mExecutor.lookBlock(player, task.click) && mode && startBuild && mBuildCooldown <= 0) {
+        startBuild(mode, &task.click, task.face, 0);
+        mBuildCooldown = 4;
+    }
+    mExecutor.tick(player);
+    return true;
+}
+
+void Bot::tickBuild(sdk::Player *player) {
+    if (mBuildCursor >= mBuildCells.size()) {
+        log("build complete: " + std::to_string(mBuildPlaced) + " placed, " +
+            std::to_string(mBuildBroken) + " broken, " + std::to_string(mBuildSkipped) + " skipped");
+        stop();
+        return;
+    }
+
+    if (mBuildCooldown > 0) --mBuildCooldown;
+    if (tickDirectPlace(player)) return;
+
+    const BuildCell &cell = mBuildCells[mBuildCursor];
+    const World &world = World::get();
+    const void *current = world.getBlock(cell.pos);
+    const World::Class klass = world.classify(current);
+    const bool wantsAir = World::nameMatches(cell.name, "air");
+
+    const sdk::Vec3 eye{player->position().x, player->position().y + 1.62f, player->position().z};
+    const sdk::Vec3 center = sdk::blockCenter(cell.pos);
+    const float ddx = center.x - eye.x, ddy = center.y - eye.y, ddz = center.z - eye.z;
+    const float reach = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+
+    if (reach > static_cast<float>(kBlockReach)) {
+        if (!mExecutor.hasPath() && !mGoal && !mComputing.load()) {
+            Goal goal;
+            goal.type = Goal::Type::Near;
+            goal.x = cell.pos.x;
+            goal.y = cell.pos.y;
+            goal.z = cell.pos.z;
+            goal.radius = 1;
+            mGoal = goal;
+        }
+        return; // requestPath runs in onTick
+    }
+
+    if (wantsAir) {
+        if (klass == World::Class::Solid) {
+            if (!Settings::get().getBool("allowBreak")) {
+                ++mBuildSkipped;
+                ++mBuildCursor;
+                return;
+            }
+            beginDirectBreak(cell.pos);
+            return;
+        }
+        ++mBuildCursor; // already open
+        return;
+    }
+
+    if (klass == World::Class::Solid || klass == World::Class::Unbreakable) {
+        const void *block = current;
+        const std::string *name = block ? static_cast<const sdk::Block *>(block)->fullName() : nullptr;
+        if (name && World::nameMatches(*name, cell.name)) {
+            ++mBuildCursor; // already correct
+            return;
+        }
+        if (!Settings::get().getBool("allowBreak")) {
+            ++mBuildSkipped;
+            ++mBuildCursor;
+            return;
+        }
+        beginDirectBreak(cell.pos);
+        return;
+    }
+
+    // Empty cell: place the held item against a solid neighbour.
+    std::optional<PlaceTask> task;
+    const BlockPos below{cell.pos.x, cell.pos.y - 1, cell.pos.z};
+    if (world.isSolid(below)) {
+        task = PlaceTask{cell.pos, below, 1};
+    } else {
+        static const int kSides[4][3] = {{1, 0, 5}, {-1, 0, 4}, {0, 1, 3}, {0, -1, 2}};
+        for (const auto &[sx, sz, face] : kSides) {
+            const BlockPos side{cell.pos.x + sx, cell.pos.y, cell.pos.z + sz};
+            if (world.isSolid(side)) {
+                task = PlaceTask{cell.pos, side, static_cast<std::uint8_t>(face)};
+                break;
+            }
+        }
+    }
+    if (!task) {
+        ++mBuildSkipped;
+        ++mBuildCursor;
+        log("cell skipped (no support neighbour)");
+        return;
+    }
+    if (!Settings::get().getBool("allowPlace")) {
+        ++mBuildSkipped;
+        ++mBuildCursor;
+        return;
+    }
+    beginDirectPlace(*task);
+}
+
 void Bot::beginDirectBreak(const BlockPos &pos) {
     mDirectBreakTarget = pos;
     mDirectBreakTicks = 0;
@@ -540,6 +785,11 @@ void Bot::onPathFinished(sdk::Player *player) {
     if (mMode == Mode::GotoBlock) {
         log("block reached");
         stop();
+        return;
+    }
+    if (mMode == Mode::Build) {
+        mGoal.reset(); // arrived at the current cell; tickBuild evaluates in reach
+        (void)player;
         return;
     }
     if (mMode == Mode::Mine && mGoal) {
@@ -633,6 +883,21 @@ void Bot::onTick(sdk::Player *player) {
         }
     }
 
+    if (mMode == Mode::Build) {
+        if (mDirectPlaceTarget) {
+            tickDirectPlace(player);
+            return;
+        }
+        if (mDirectBreakTarget) return; // shared direct-break handler below
+        tickBuild(player);
+        if (!mExecutor.hasPath() && mGoal && !mComputing.load()) requestPath(player);
+        if (mExecutor.hasPath()) {
+            mExecutor.tick(player);
+            if (!mExecutor.hasPath()) onPathFinished(player);
+        }
+        return;
+    }
+
     if (!mExecutor.hasPath() && !mDirectBreakTarget && mGoal && !mComputing.load()) {
         requestPath(player);
     }
@@ -643,6 +908,12 @@ void Bot::onTick(sdk::Player *player) {
         const World &world = World::get();
 
         if (!world.isSolid(target)) {
+            if (mMode == Mode::Build) {
+                ++mBuildBroken;
+                ++mBuildCursor;
+                mDirectBreakTarget.reset();
+                return;
+            }
             ++mMinedCount;
             mDirectBreakTarget.reset();
             mGoal.reset();
@@ -655,6 +926,13 @@ void Bot::onTick(sdk::Player *player) {
         }
 
         if (++mDirectBreakTicks > Settings::get().getInt("movementTimeoutTicks", 100)) {
+            if (mMode == Mode::Build) {
+                ++mBuildSkipped;
+                ++mBuildCursor;
+                mDirectBreakTarget.reset();
+                log("cell skipped (break failed)");
+                return;
+            }
             mBlacklist.push_back(target);
             mDirectBreakTarget.reset();
             mGoal.reset();
@@ -678,6 +956,7 @@ void Bot::onTick(sdk::Player *player) {
             else if (az >= ax) face = dz > 0 ? 3 : 2;
             else face = dx > 0 ? 5 : 4;
             bool destroyed = false;
+            mExecutor.lookBlock(player, target);
             startDestroy(mode, &target, face, &destroyed);
             mExecutor.tick(player); // keeps movement input neutral
         } else {
