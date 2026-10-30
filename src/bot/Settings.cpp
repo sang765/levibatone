@@ -24,6 +24,9 @@ const std::unordered_map<std::string, std::string> kDefaults{
     {"primaryTimeoutMs", "300"},
     {"failureTimeoutMs", "1500"},
     {"mineScanRadius", "24"},
+    {"followRadius", "3"},
+    {"followRange", "30"},
+    {"followUpdateInterval", "10"},
 };
 
 bool parseBool(std::string_view value) {

@@ -45,8 +45,10 @@ World::Class classifyName(std::string_view name) {
         return World::Class::Dangerous;
     }
 
+    if (isOneOf(name, {"ladder", "vine"})) return World::Class::Climbable;
+
     if (isOneOf(name, {"tall_grass", "short_grass", "grass", "fern", "large_fern", "dead_bush",
-                       "seagrass", "tall_seagrass", "kelp", "kelp_plant", "vine", "glow_lichen",
+                       "seagrass", "tall_seagrass", "kelp", "kelp_plant", "glow_lichen",
                        "sugar_cane", "bamboo_sapling", "sapling", "spruce_sapling", "birch_sapling",
                        "jungle_sapling", "acacia_sapling", "dark_oak_sapling", "mangrove_propagule",
                        "cherry_sapling", "pale_oak_sapling", "red_mushroom", "brown_mushroom",
@@ -54,7 +56,7 @@ World::Class classifyName(std::string_view name) {
                        "cornflower", "lily_of_the_valley", "torchflower", "pink_petals",
                        "sunflower", "lilac", "rose_bush", "peony", "torch", "soul_torch",
                        "redstone_torch", "redstone_wire", "repeater", "comparator", "lever",
-                       "tripwire", "tripwire_hook", "string", "snow_layer", "ladder", "rail",
+                       "tripwire", "tripwire_hook", "string", "snow_layer", "rail",
                        "powered_rail", "detector_rail", "activator_rail", "wheat", "carrots",
                        "potatoes", "beetroots", "nether_wart", "cobweb", "scaffolding", "sculk_vein",
                        "moss_carpet", "pale_moss_carpet", "big_dripleaf", "small_dripleaf",

@@ -5,8 +5,10 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 ## Features
 
 - **goto** — A\* pathing to a position (`goto <x> [y] <z>`), with best-so-far partial paths when the destination is out of the search budget
-- **mine** — find blocks by name in a radius, path to them and break them (`mine <block> [count]`), with unreachable-target blacklisting
-- **Movements** — walk, diagonal (corner-cut safe), ascend (jump), fall (≤ 3 blocks, land in water allowed), mine-down, pillar (place under feet)
+- **mine** — find blocks by name in a radius, path to them and break them (`mine <block> [count]`), with unreachable-target blacklisting; scanning runs on a worker thread
+- **getto** — path to the nearest block of a type without breaking it (`getto <block>`)
+- **follow** — follow the nearest player (`follow`); nametag-based targets need a verified symbol and are not wired yet
+- **Movements** — walk, diagonal (corner-cut safe), ascend (jump), fall (≤ 3 blocks, land in water allowed), mine-down, pillar (place under feet), bridge (sneak-place over gaps with a safe landing below), ladder up/down, swim up
 - **Block interaction** — breaks and places blocks through the game's own GameMode functions, honoring `allowBreak` / `allowPlace`
 - **Costs** — Baritone's exact ActionCosts model (walk 20/4.317, jump = fall(1.25) − fall(0.25), fall simulation, placement/break/jump penalties) and the 3.563 cost heuristic
 - **HUD** — status overlay (mode, path progress, mined count, messages) plus a floating STOP button
@@ -26,6 +28,8 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 |---|---|
 | `goto <x> [y] <z>` | Path to a position (y optional → GoalXZ) |
 | `mine <block> [count]` | Find and mine blocks by name (`iron_ore` also matches `deepslate_iron_ore`) |
+| `getto <block>` | Walk to the nearest block of a type without mining it |
+| `follow` | Follow the nearest player (keep `followRadius` distance) |
 | `stop` / `cancel` | Cancel the bot |
 | `status` | Current mode, goal, path progress |
 | `set <key> <value>` | Change a setting |
@@ -33,7 +37,7 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 
 ## Settings (defaults = Baritone)
 
-`allowBreak=true`, `allowPlace=true`, `allowSprint=true`, `allowDownward=true`, `maxFallHeightNoWater=3`, `costHeuristic=3.563`, `blockPlacementPenalty=20`, `blockBreakAdditionalPenalty=2`, `jumpPenalty=2`, `walkOnWaterOnePenalty=3`, `mineGoalUpdateInterval=5`, `movementTimeoutTicks=100`, `maxNodes=15000`, `primaryTimeoutMs=300`, `failureTimeoutMs=1500`, `mineScanRadius=24`
+`allowBreak=true`, `allowPlace=true`, `allowSprint=true`, `allowDownward=true`, `maxFallHeightNoWater=3`, `costHeuristic=3.563`, `blockPlacementPenalty=20`, `blockBreakAdditionalPenalty=2`, `jumpPenalty=2`, `walkOnWaterOnePenalty=3`, `mineGoalUpdateInterval=5`, `movementTimeoutTicks=100`, `maxNodes=15000`, `primaryTimeoutMs=300`, `failureTimeoutMs=1500`, `mineScanRadius=24`, `followRadius=3`, `followRange=30`, `followUpdateInterval=10`
 
 ## Build
 
@@ -60,7 +64,7 @@ Target: **Minecraft 1.26.60** (arm64-v8a) via LeviLauncher. All signature patter
 
 ## Not ported (yet)
 
-Baritone has far more than the core; these are intentionally out of scope for v1: builder/schematics, follow, farm, getToBlock, elytra, parkour and diagonal-descend movements, inventory/auto-tool management, cached-chunk pathing, and world-space path rendering.
+Baritone has far more than the core; these are intentionally out of scope for v1: builder/schematics, farm, elytra, parkour and diagonal-descend movements, inventory/auto-tool management, cached-chunk pathing, world-space path rendering, and nametag-based follow (the 1.26.60.4 binary no longer matches the 1.26.60 `ActorGetNameTag` pattern; players-only follow ships).
 
 ## Credits
 

@@ -22,6 +22,7 @@ public:
         Air,
         Liquid,
         Passable,
+        Climbable,
         Solid,
         Unbreakable,
         Dangerous,

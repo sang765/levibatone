@@ -21,7 +21,6 @@ public:
         std::size_t edgeCount = 0;
         bool breaking = false;
         bool placing = false;
-        bool waitingForPath = false;
         int stuckTicks = 0;
     };
 
@@ -55,7 +54,7 @@ private:
 
     bool breakBlock(sdk::Player *player, const BlockPos &pos, bool *instantlyBroke);
     void stopBreaking(sdk::Player *player, const BlockPos &pos);
-    bool placeBlock(sdk::Player *player, const BlockPos &pos);
+    bool placeBlock(sdk::Player *player, const PlaceTask &task);
 
     void executeEdge(sdk::Player *player, const PathEdge &edge, const sdk::Vec3 &pos);
 

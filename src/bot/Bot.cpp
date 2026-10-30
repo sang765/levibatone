@@ -9,6 +9,7 @@
 #include "Settings.hpp"
 #include "World.hpp"
 #include "levibatone/sdk/client/ClientInstance.hpp"
+#include "levibatone/sdk/world/Actors.hpp"
 
 namespace levibatone::bot {
 
@@ -70,8 +71,12 @@ std::string Bot::modeLabel() const {
         return "idle";
     case Mode::Goto:
         return "goto";
+    case Mode::GotoBlock:
+        return "getto " + mMineTarget;
     case Mode::Mine:
         return "mine " + mMineTarget;
+    case Mode::Follow:
+        return "follow";
     }
     return "?";
 }
@@ -87,8 +92,11 @@ void Bot::stop() {
     mMinedCount = 0;
     mBlacklist.clear();
     mDirectBreakTarget.reset();
+    mFollowTarget = nullptr;
     mPendingPath.reset();
+    mPendingScan.reset();
     mComputing = false;
+    mScanComputing = false;
     ++mGeneration;
     mExecutor.reset();
 }
@@ -98,8 +106,11 @@ void Bot::onWorldLeft() {
     mGoal.reset();
     mBlacklist.clear();
     mDirectBreakTarget.reset();
+    mFollowTarget = nullptr;
     mPendingPath.reset();
+    mPendingScan.reset();
     mComputing = false;
+    mScanComputing = false;
     ++mGeneration;
     mExecutor.reset();
     mLevel = nullptr;
@@ -181,6 +192,45 @@ std::vector<std::string> Bot::executeCommand(const std::string &line) {
         return {"mining " + mMineTarget};
     }
 
+    if (command == "getto" || command == "getToBlock") {
+        if (args.size() < 2) return {"usage: getto <block>"};
+        ++mGeneration;
+        mPendingPath.reset();
+        mPendingScan.reset();
+        mComputing = false;
+        mScanComputing = false;
+        mMode = Mode::GotoBlock;
+        mMineTarget = toLower(args[1]);
+        mMineScanCooldown = 0;
+        mGoal.reset();
+        mBlacklist.clear();
+        mDirectBreakTarget.reset();
+        mFollowTarget = nullptr;
+        mExecutor.reset();
+        log("getting to " + mMineTarget);
+        return {"pathing to nearest " + mMineTarget};
+    }
+
+    if (command == "follow") {
+        ++mGeneration;
+        mPendingPath.reset();
+        mPendingScan.reset();
+        mComputing = false;
+        mScanComputing = false;
+        mMode = Mode::Follow;
+        mFollowTarget = nullptr;
+        mGoal.reset();
+        mBlacklist.clear();
+        mDirectBreakTarget.reset();
+        mExecutor.reset();
+        mFollowRefreshCooldown = 0;
+        if (args.size() >= 2) {
+            log("follow: name matching needs a verified symbol; following nearest player");
+        }
+        log("following nearest player");
+        return {"following nearest player"};
+    }
+
     if (command == "status") {
         feedback.push_back("mode: " + modeLabel());
         if (mGoal) {
@@ -242,12 +292,16 @@ void Bot::adoptPendingPath() {
         return;
     }
 
-    if (mMode == Mode::Mine && mGoal) {
+    if ((mMode == Mode::Mine || mMode == Mode::GotoBlock) && mGoal) {
         // blacklistClosestOnFailure: mark this target impossible, try the next.
         mBlacklist.push_back({mGoal->x, mGoal->y, mGoal->z});
         mGoal.reset();
         mMineScanCooldown = 0;
         log("target unreachable, trying next");
+    } else if (mMode == Mode::Follow) {
+        mGoal.reset();
+        mFollowRefreshCooldown = 0;
+        log("path to player failed, retrying");
     } else {
         log("no path found");
         stop();
@@ -282,60 +336,150 @@ void Bot::requestPath(sdk::Player *player) {
     }).detach();
 }
 
-void Bot::updateMineGoal(sdk::Player *player, const BlockPos &feet) {
-    if (mMineScanCooldown > 0) {
-        --mMineScanCooldown;
-        return;
-    }
+void Bot::requestScan(const BlockPos &feet) {
+    if (mScanComputing.load()) return;
 
-    const World &world = World::get();
+    const std::string target = mMineTarget;
+    std::vector<BlockPos> blacklist = mBlacklist;
     const int radius = std::clamp(Settings::get().getInt("mineScanRadius", 24), 4, 64);
-    const int blockBudget = 12000; // hard cap on getBlock calls per scan
+    const int blockBudget = 16000; // hard cap on getBlock calls per scan
+    const std::uint32_t generation = mGeneration;
 
-    std::vector<BlockPos> matches;
-    int checked = 0;
-    for (int r = 1; r <= radius && checked < blockBudget; ++r) {
-        for (int dx = -r; dx <= r && checked < blockBudget; ++dx) {
-            for (int dz = -r; dz <= r && checked < blockBudget; ++dz) {
-                if (std::max(std::abs(dx), std::abs(dz)) != r) continue; // shell surface only
-                for (int dy = -r; dy <= r && checked < blockBudget; ++dy) {
-                    ++checked;
-                    const BlockPos pos{feet.x + dx, feet.y + dy, feet.z + dz};
-                    const void *block = world.getBlock(pos);
-                    if (!block) continue;
-                    if (world.classify(block) != World::Class::Solid) continue;
-                    const std::string *name = static_cast<const sdk::Block *>(block)->fullName();
-                    if (name && World::nameMatches(*name, mMineTarget) && !blacklisted(pos)) {
-                        matches.push_back(pos);
-                        if (matches.size() >= 16) break;
+    mScanComputing = true;
+    std::thread([this, feet, target, blacklist, radius, blockBudget, generation]() {
+        ScanResult result;
+        const World &world = World::get();
+        int checked = 0;
+        for (int r = 1; r <= radius && checked < blockBudget; ++r) {
+            for (int dx = -r; dx <= r && checked < blockBudget; ++dx) {
+                for (int dz = -r; dz <= r && checked < blockBudget; ++dz) {
+                    if (std::max(std::abs(dx), std::abs(dz)) != r) continue; // shell surface only
+                    for (int dy = -r; dy <= r && checked < blockBudget; ++dy) {
+                        ++checked;
+                        const BlockPos pos{feet.x + dx, feet.y + dy, feet.z + dz};
+                        const void *block = world.getBlock(pos);
+                        if (!block) continue;
+                        if (world.classify(block) != World::Class::Solid) continue;
+                        const std::string *name = static_cast<const sdk::Block *>(block)->fullName();
+                        if (!name || !World::nameMatches(*name, target)) continue;
+                        if (std::find(blacklist.begin(), blacklist.end(), pos) != blacklist.end()) continue;
+                        result.matches.push_back(pos);
                     }
                 }
             }
         }
+        std::sort(result.matches.begin(), result.matches.end(),
+                  [&feet](const BlockPos &a, const BlockPos &b) { return distSq(a, feet) < distSq(b, feet); });
+        result.valid = true;
+        result.exhausted = checked < blockBudget;
+        if (generation != mGeneration.load()) {
+            mScanComputing = false;
+            return;
+        }
+        {
+            std::lock_guard lock(mScanMutex);
+            mPendingScan = std::move(result);
+        }
+        mScanComputing = false;
+    }).detach();
+}
+
+void Bot::adoptPendingScan(const BlockPos &feet) {
+    std::optional<ScanResult> pending;
+    {
+        std::lock_guard lock(mScanMutex);
+        pending = std::move(mPendingScan);
+        mPendingScan.reset();
     }
-
+    if (!pending || !pending->valid) return;
     mMineScanCooldown = Settings::get().getInt("mineGoalUpdateInterval", 5);
-
-    if (matches.empty()) {
+    if (pending->matches.empty()) {
         if (!mGoal) {
-            log("no " + mMineTarget + " found within " + std::to_string(radius) + " blocks");
+            log("no " + mMineTarget + " found within " +
+                std::to_string(std::clamp(Settings::get().getInt("mineScanRadius", 24), 4, 64)) + " blocks");
             stop();
         }
         return;
     }
+    pickScanGoal(pending->matches, feet);
+}
 
-    std::sort(matches.begin(), matches.end(),
-              [&feet](const BlockPos &a, const BlockPos &b) { return distSq(a, feet) < distSq(b, feet); });
+void Bot::pickScanGoal(const std::vector<BlockPos> &matches, const BlockPos &feet) {
+    for (const BlockPos &pos : matches) {
+        Goal goal;
+        goal.type = Goal::Type::Near;
+        goal.x = pos.x;
+        goal.y = pos.y;
+        goal.z = pos.z;
+        goal.radius = 1;
+        if (mGoal && mGoal->type == goal.type && mGoal->x == goal.x && mGoal->y == goal.y &&
+            mGoal->z == goal.z) {
+            return; // already pathing to this target
+        }
+        (void)feet;
+        mGoal = goal;
+        mExecutor.reset();
+        return;
+    }
+}
 
-    Goal goal;
-    goal.type = Goal::Type::Near;
-    goal.x = matches.front().x;
-    goal.y = matches.front().y;
-    goal.z = matches.front().z;
-    goal.radius = 1;
-    if (mGoal && mGoal->type == goal.type && mGoal->x == goal.x && mGoal->y == goal.y && mGoal->z == goal.z) return;
-    mGoal = goal;
-    mExecutor.reset();
+void Bot::updateFollowGoal(sdk::Player *player) {
+    auto fetch = sdk::fetchNearbyActors();
+    if (!fetch || !player) return;
+
+    const int radius = std::clamp(Settings::get().getInt("followRadius", 3), 0, 16);
+    const sdk::Vec3 extent{static_cast<float>(Settings::get().getInt("followRange", 30)),
+                           static_cast<float>(Settings::get().getInt("followRange", 30)),
+                           static_cast<float>(Settings::get().getInt("followRange", 30))};
+    const sdk::ActorVec actors = fetch(player, &extent, sdk::kMobActorTypeFilter);
+    if (!actors.begin || !actors.end) {
+        if (!mGoal && mFollowTarget == nullptr) {
+            log("no player nearby to follow");
+            mFollowRefreshCooldown = 40;
+        }
+        return;
+    }
+
+    auto isPlayer = sdk::actorIsPlayer();
+    void *chosen = nullptr;
+    for (auto it = actors.begin; it < actors.end; ++it) {
+        if (!it->mActor || it->mActor == player) continue;
+        if (isPlayer && !isPlayer(it->mActor)) continue;
+        chosen = it->mActor;
+        break; // already distance-sorted: nearest player first
+    }
+    if (!chosen) {
+        if (!mGoal && mFollowTarget == nullptr) {
+            log("no player nearby to follow");
+            mFollowRefreshCooldown = 40;
+        }
+        return;
+    }
+
+    if (chosen != mFollowTarget || !mGoal) {
+        mFollowTarget = chosen;
+        const BlockPos targetPos = feetBlock(reinterpret_cast<sdk::Actor *>(chosen)->position());
+        Goal goal;
+        goal.type = Goal::Type::Near;
+        goal.x = targetPos.x;
+        goal.y = targetPos.y;
+        goal.z = targetPos.z;
+        goal.radius = radius;
+        mGoal = goal;
+        mExecutor.reset();
+        log("following player at " + std::to_string(targetPos.x) + " " + std::to_string(targetPos.y) +
+            " " + std::to_string(targetPos.z));
+    } else {
+        // Keep the goal box around the moving target.
+        const BlockPos targetPos = feetBlock(reinterpret_cast<sdk::Actor *>(chosen)->position());
+        if (mGoal && (std::abs(targetPos.x - mGoal->x) > radius || std::abs(targetPos.z - mGoal->z) > radius ||
+                      std::abs(targetPos.y - mGoal->y) > radius)) {
+            mGoal->x = targetPos.x;
+            mGoal->y = targetPos.y;
+            mGoal->z = targetPos.z;
+            mExecutor.reset();
+        }
+    }
 }
 
 void Bot::beginDirectBreak(const BlockPos &pos) {
@@ -349,6 +493,11 @@ void Bot::onPathFinished(sdk::Player *player) {
         stop();
         return;
     }
+    if (mMode == Mode::GotoBlock) {
+        log("block reached");
+        stop();
+        return;
+    }
     if (mMode == Mode::Mine && mGoal) {
         const BlockPos target{mGoal->x, mGoal->y, mGoal->z};
         if (World::get().isSolid(target)) {
@@ -358,6 +507,11 @@ void Bot::onPathFinished(sdk::Player *player) {
             mMineScanCooldown = 0;
         }
         (void)player;
+    }
+    if (mMode == Mode::Follow) {
+        // Continuous follow: refresh the goal to the target's current position.
+        mGoal.reset();
+        mFollowRefreshCooldown = 0;
     }
 }
 
@@ -397,8 +551,24 @@ void Bot::onTick(sdk::Player *player) {
 
     const BlockPos feet = feetBlock(player->position());
 
-    if (mMode == Mode::Mine && !mExecutor.hasPath() && !mDirectBreakTarget && !mComputing.load()) {
-        updateMineGoal(player, feet);
+    if (mMode == Mode::Mine || mMode == Mode::GotoBlock) {
+        if (!mExecutor.hasPath() && !mDirectBreakTarget && !mComputing.load() && !mScanComputing.load()) {
+            if (mMineScanCooldown > 0) {
+                --mMineScanCooldown;
+            } else if (!mGoal) {
+                requestScan(feet);
+            }
+        }
+        if (mPendingScan) adoptPendingScan(feet);
+    }
+
+    if (mMode == Mode::Follow) {
+        if (mFollowRefreshCooldown > 0) {
+            --mFollowRefreshCooldown;
+        } else {
+            updateFollowGoal(player);
+            mFollowRefreshCooldown = Settings::get().getInt("followUpdateInterval", 10);
+        }
     }
 
     if (!mExecutor.hasPath() && !mDirectBreakTarget && mGoal && !mComputing.load()) {

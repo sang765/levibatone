@@ -118,7 +118,7 @@ void Hud::tick() {
 
     std::string status = std::string("LeviBatone ") + std::string(Version);
     status += " - " + bot.modeLabel();
-    if (bot.mode() != Bot::Mode::Idle && !snap.waitingForPath && !bot.executorHasPath() && goal) {
+    if (bot.mode() != Bot::Mode::Idle && !bot.executorHasPath() && goal) {
         status += " (finding path)";
     }
 

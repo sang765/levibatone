@@ -26,6 +26,14 @@ struct Goal {
     double heuristic(const BlockPos &pos) const;
 };
 
+// A block to place while executing the edge: target = where the new block
+// should end up; click = the existing block to click and on which face.
+struct PlaceTask {
+    BlockPos target{};
+    BlockPos click{};
+    std::uint8_t face = 1; // 0 down, 1 up, 2 north, 3 south, 4 west, 5 east
+};
+
 // A single movement from one block to the next, with the blocks that must be
 // broken or placed first — the C++ analogue of Baritone's Movement classes.
 struct PathEdge {
@@ -35,8 +43,9 @@ struct PathEdge {
     Kind kind = Kind::Walk;
     double cost = 0.0;
     std::vector<BlockPos> toBreak;
-    std::vector<BlockPos> toPlace; // placed against the top face of the block below
+    std::vector<PlaceTask> toPlace;
     bool jump = false;
+    bool sneak = false;
 };
 
 struct Path {

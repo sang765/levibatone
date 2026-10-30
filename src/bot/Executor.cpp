@@ -152,15 +152,13 @@ void Executor::stopBreaking(sdk::Player *player, const BlockPos &pos) {
     if (mode && stopDestroy) stopDestroy(mode, &pos);
 }
 
-bool Executor::placeBlock(sdk::Player *player, const BlockPos &pos) {
+bool Executor::placeBlock(sdk::Player *player, const PlaceTask &task) {
     void *mode = core::actions.mode();
     auto startBuild = core::actions.startBuild.load(std::memory_order_acquire);
     if (!mode || !startBuild) return false;
-    // The place target sits on top of an existing block: click its top face.
-    const BlockPos below{pos.x, pos.y - 1, pos.z};
-    if (!World::get().isSolid(below)) return false;
-    if (!lookBlock(player, below)) return false;
-    startBuild(mode, &below, 1, 0);
+    if (!World::get().isSolid(task.click)) return false;
+    if (!lookBlock(player, task.click)) return false;
+    startBuild(mode, &task.click, task.face, 0);
     return true;
 }
 
@@ -216,17 +214,19 @@ void Executor::executeEdge(sdk::Player *player, const PathEdge &edge, const sdk:
     }
     if (mAct == Act::Place) {
         while (mActionIndex < edge.toPlace.size()) {
-            const BlockPos &target = edge.toPlace[mActionIndex];
-            if (world.isSolid(target)) {
+            const PlaceTask &task = edge.toPlace[mActionIndex];
+            if (world.isSolid(task.target)) {
                 ++mActionIndex;
                 continue;
             }
             mPlacingNow = true;
             if (mPlaceCooldown <= 0) {
-                placeBlock(player, target);
+                placeBlock(player, task);
                 mPlaceCooldown = 4; // rightClickSpeed
             }
-            applyInput(player, Input{});
+            Input hold;
+            hold.sneak = edge.sneak;
+            applyInput(player, hold);
             return;
         }
         mAct = Act::Move;
@@ -248,8 +248,11 @@ void Executor::executeEdge(sdk::Player *player, const PathEdge &edge, const sdk:
     input.sprint = Settings::get().getBool("allowSprint") && !inWater &&
                    edge.kind == PathEdge::Kind::Walk && edge.toBreak.empty();
 
+    input.sneak = input.sneak || edge.sneak;
+
     switch (edge.kind) {
     case PathEdge::Kind::Ascend:
+        if (!edge.jump) break; // ladder / swim ascend: forward press is enough
         // Jump once close to the base of the step.
         if (horizontal < 1.1f && vertical > 0.1f && mJumpHoldTicks <= 0) {
             mJumpHoldTicks = 6;

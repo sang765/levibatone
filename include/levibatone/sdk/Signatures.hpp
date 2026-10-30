@@ -22,6 +22,8 @@ enum class SignatureId : std::uint16_t {
     GameModeAttackInternal,
     GameModeInteract,
     SurvivalModeInteract,
+    ActorIsPlayer,
+    ActorFetchNearbyActorsSorted,
     BlockSourceGetBlock,
     LocalPlayerApplyTurnDelta,
     Count,

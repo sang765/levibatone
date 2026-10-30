@@ -22,7 +22,7 @@ using sdk::BlockPos;
 // the game thread, and implements the command surface (#goto, #mine, ...).
 class Bot {
 public:
-    enum class Mode { Idle, Goto, Mine };
+    enum class Mode { Idle, Goto, GotoBlock, Mine, Follow };
 
     struct Message {
         std::string text;
@@ -56,16 +56,13 @@ private:
 
     void requestPath(sdk::Player *player);
     void adoptPendingPath();
-    void updateMineGoal(sdk::Player *player, const BlockPos &feet);
+    void requestScan(const BlockPos &feet);
+    void adoptPendingScan(const BlockPos &feet);
+    void pickScanGoal(const std::vector<BlockPos> &matches, const BlockPos &feet);
+    void updateFollowGoal(sdk::Player *player);
     void onPathFinished(sdk::Player *player);
     bool blacklisted(const BlockPos &pos) const;
     void beginDirectBreak(const BlockPos &pos);
-
-    struct ScanResult {
-        bool valid = false;
-        std::vector<BlockPos> positions;
-        int dimensionId = 0;
-    };
 
     Mode mMode = Mode::Idle;
     std::optional<Goal> mGoal;
@@ -73,18 +70,28 @@ private:
     int mMineRemaining = 0;
     int mMinedCount = 0;
     int mMineScanCooldown = 0;
+    int mFollowRefreshCooldown = 0;
+    void *mFollowTarget = nullptr;
     std::vector<BlockPos> mBlacklist;
     std::optional<BlockPos> mDirectBreakTarget;
     int mDirectBreakTicks = 0;
     std::atomic<std::uint32_t> mGeneration{0};
+
+    // Asynchronous block scan (worker thread) for mine / getto goals.
+    struct ScanResult {
+        bool valid = false;
+        std::vector<BlockPos> matches;
+        bool exhausted = false;
+    };
+    std::mutex mScanMutex;
+    std::optional<ScanResult> mPendingScan;
+    std::atomic<bool> mScanComputing{false};
 
     Executor mExecutor;
 
     std::shared_ptr<const Path> mPendingPath;
     std::mutex mPendingMutex;
     std::atomic<bool> mComputing{false};
-    std::atomic<bool> mScanValid{false};
-    std::unique_ptr<std::thread> mWorker;
 
     std::mutex mMessageMutex;
     std::vector<Message> mMessages;

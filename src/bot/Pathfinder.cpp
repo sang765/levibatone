@@ -16,6 +16,8 @@ namespace {
 // ActionCosts.java (baritone.api.pathing.movement), values verbatim.
 constexpr double kWalkOneBlock = 20.0 / 4.317;
 constexpr double kWalkOneInWater = 20.0 / 2.2;
+constexpr double kLadderUpOne = 20.0 / 2.35;
+constexpr double kLadderDownOne = 20.0 / 3.0;
 constexpr double kWalkOffBlock = kWalkOneBlock * 0.8;
 constexpr double kCenterAfterFall = kWalkOneBlock - kWalkOffBlock;
 constexpr double kCostInf = 1000000.0;
@@ -93,7 +95,8 @@ World::Class classAt(const World &world, const BlockPos &pos) { return world.cla
 // and breakable, COST_INF otherwise. Appends to toBreak when breaking.
 double clearCost(const World &world, const BlockPos &pos, std::vector<BlockPos> &toBreak) {
     const World::Class klass = classAt(world, pos);
-    if (klass == World::Class::Air || klass == World::Class::Liquid || klass == World::Class::Passable) {
+    if (klass == World::Class::Air || klass == World::Class::Liquid ||
+        klass == World::Class::Passable || klass == World::Class::Climbable) {
         return 0.0;
     }
     if (klass == World::Class::Dangerous || klass == World::Class::Unknown) return kCostInf;
@@ -281,8 +284,80 @@ MovementCandidate pillarEdge(const World &world, const BlockPos &from) {
     candidate.edge.kind = PathEdge::Kind::Pillar;
     candidate.edge.jump = true;
     candidate.edge.toBreak = std::move(toBreak);
-    candidate.edge.toPlace.push_back(from);
+    candidate.edge.toPlace.push_back(PlaceTask{from, {from.x, from.y - 1, from.z}, 1});
     candidate.edge.cost = cost;
+    return candidate;
+}
+
+MovementCandidate ladderUpEdge(const World &world, const BlockPos &from) {
+    MovementCandidate candidate;
+    const BlockPos dest{from.x, from.y + 1, from.z};
+    if (classAt(world, dest) != World::Class::Climbable) return candidate;
+    std::vector<BlockPos> toBreak;
+    double cost = clearCost(world, {dest.x, dest.y + 1, dest.z}, toBreak);
+    if (cost >= kCostInf) return candidate;
+    cost += kLadderUpOne;
+    candidate.edge.dest = dest;
+    candidate.edge.kind = PathEdge::Kind::Ascend;
+    candidate.edge.toBreak = std::move(toBreak);
+    candidate.edge.cost = cost;
+    return candidate;
+}
+
+MovementCandidate ladderDownEdge(const World &world, const BlockPos &from) {
+    MovementCandidate candidate;
+    const BlockPos dest{from.x, from.y - 1, from.z};
+    if (classAt(world, dest) != World::Class::Climbable) return candidate;
+    candidate.edge.dest = dest;
+    candidate.edge.kind = PathEdge::Kind::Descend;
+    candidate.edge.cost = kLadderDownOne;
+    return candidate;
+}
+
+MovementCandidate swimUpEdge(const World &world, const BlockPos &from) {
+    MovementCandidate candidate;
+    if (classAt(world, from) != World::Class::Liquid) return candidate;
+    const BlockPos dest{from.x, from.y + 1, from.z};
+    if (classAt(world, dest) != World::Class::Liquid) return candidate;
+    const World::Class above = classAt(world, {dest.x, dest.y + 1, dest.z});
+    if (above != World::Class::Liquid && above != World::Class::Air && above != World::Class::Passable) {
+        return candidate;
+    }
+    candidate.edge.dest = dest;
+    candidate.edge.kind = PathEdge::Kind::Ascend;
+    candidate.edge.cost = kWalkOneInWater * 1.5;
+    return candidate;
+}
+
+MovementCandidate bridgeEdge(const World &world, const BlockPos &from, int dx, int dz) {
+    MovementCandidate candidate;
+    const double place = placeCost();
+    if (place >= kCostInf) return candidate;
+    const BlockPos dest{from.x + dx, from.y, from.z + dz};
+    const BlockPos gap{dest.x, dest.y - 1, dest.z};
+    if (classAt(world, gap) != World::Class::Air) return candidate;
+    if (classAt(world, {from.x, from.y - 1, from.z}) != World::Class::Solid &&
+        classAt(world, {from.x, from.y - 1, from.z}) != World::Class::Unbreakable) {
+        return candidate;
+    }
+    // dest feet/head must already be passable (bridging is for open gaps).
+    if (!world.canWalkThrough(dest)) return candidate;
+    if (!world.canWalkThrough({dest.x, dest.y + 1, dest.z})) return candidate;
+    // Worst case must be a survivable fall: first solid landing within 3.
+    bool safeLanding = false;
+    for (int d = 1; d <= 4; ++d) {
+        const World::Class klass = classAt(world, {gap.x, gap.y - d, gap.z});
+        if (klass == World::Class::Solid || klass == World::Class::Unbreakable) { safeLanding = true; break; }
+        if (klass == World::Class::Unknown || klass == World::Class::Dangerous) break;
+    }
+    if (!safeLanding) return candidate;
+
+    const std::uint8_t face = dx > 0 ? 5 : dx < 0 ? 4 : dz > 0 ? 3 : 2;
+    candidate.edge.dest = dest;
+    candidate.edge.kind = PathEdge::Kind::Walk;
+    candidate.edge.sneak = true;
+    candidate.edge.toPlace.push_back(PlaceTask{gap, {from.x, from.y - 1, from.z}, face});
+    candidate.edge.cost = kWalkOneBlock + place;
     return candidate;
 }
 
@@ -311,6 +386,20 @@ std::vector<MovementCandidate> successors(const World &world, const BlockPos &po
 
     candidate = pillarEdge(world, pos);
     if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
+
+    candidate = ladderUpEdge(world, pos);
+    if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
+
+    candidate = ladderDownEdge(world, pos);
+    if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
+
+    candidate = swimUpEdge(world, pos);
+    if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
+
+    for (const auto &[dx, dz] : kDirs) {
+        candidate = bridgeEdge(world, pos, dx, dz);
+        if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
+    }
 
     return result;
 }
