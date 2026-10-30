@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,10 +22,15 @@ public:
     std::vector<std::string> list() const;
     bool has(std::string_view key) const;
 
+    // "key = value" text file under the mod config dir; every set() persists.
+    void loadStore(const std::filesystem::path &path);
+    void persist() const;
+
 private:
     Settings();
 
     std::unordered_map<std::string, std::string> mValues;
+    std::filesystem::path mStorePath;
 };
 
 }

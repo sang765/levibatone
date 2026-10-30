@@ -7,7 +7,7 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 - **goto** — A\* pathing to a position (`goto <x> [y] <z>`), with best-so-far partial paths when the destination is out of the search budget
 - **mine** — find blocks by name in a radius, path to them and break them (`mine <block> [count]`), with unreachable-target blacklisting; scanning runs on a worker thread
 - **getto** — path to the nearest block of a type without breaking it (`getto <block>`)
-- **follow** — follow the nearest player (`follow`); nametag-based targets need a verified symbol and are not wired yet
+- **follow** — follow the nearest player (`follow`) or a player by name (`follow <name>`, matched against the player list name, color codes stripped)
 - **Movements** — walk, diagonal (corner-cut safe), ascend (jump), fall (≤ 3 blocks, land in water allowed), mine-down, pillar (place under feet), bridge (sneak-place over gaps with a safe landing below), ladder up/down, swim up
 - **Block interaction** — breaks and places blocks through the game's own GameMode functions, honoring `allowBreak` / `allowPlace`
 - **Costs** — Baritone's exact ActionCosts model (walk 20/4.317, jump = fall(1.25) − fall(0.25), fall simulation, placement/break/jump penalties) and the 3.563 cost heuristic
@@ -64,7 +64,7 @@ Target: **Minecraft 1.26.60** (arm64-v8a) via LeviLauncher. All signature patter
 
 ## Not ported (yet)
 
-Baritone has far more than the core; these are intentionally out of scope for v1: builder/schematics, farm, elytra, parkour and diagonal-descend movements, inventory/auto-tool management, cached-chunk pathing, world-space path rendering, and nametag-based follow (the 1.26.60.4 binary no longer matches the 1.26.60 `ActorGetNameTag` pattern; players-only follow ships).
+Baritone has far more than the core; these are intentionally out of scope for v1: builder/schematics, farm, elytra, parkour and diagonal-descend movements, inventory/auto-tool management, cached-chunk pathing, and world-space path rendering. `mine` auto-explores toward unexplored ground when no target is in range (`exploreForBlocks`, up to 12 attempts). Settings persist to `config/settings.txt`.
 
 ## Credits
 

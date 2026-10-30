@@ -6,6 +6,7 @@
 
 #include "../bot/Bot.hpp"
 #include "../bot/Hud.hpp"
+#include "../bot/Settings.hpp"
 #include "GameActions.hpp"
 #include "GameHooks.hpp"
 #include "levibatone/sdk/Functions.hpp"
@@ -45,6 +46,9 @@ std::string missingSignatures() {
 bool load() {
     self = ll::mod::NativeMod::current();
     if (self) {
+        std::error_code ec;
+        std::filesystem::create_directories(self->getConfigDir(), ec);
+        bot::Settings::get().loadStore(self->getConfigDir() / "settings.txt");
         self->getLogger().info("LeviBatone {} loaded", std::string(Version));
     }
     return true;
@@ -83,6 +87,7 @@ bool enable() {
 }
 
 bool disable() {
+    bot::Settings::get().persist();
     bot::Bot::get().stop();
     bot::Bot::get().onWorldLeft();
     bot::Hud::disable();

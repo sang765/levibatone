@@ -37,6 +37,22 @@ std::string toLower(std::string text) {
     return text;
 }
 
+// Strip Minecraft section-sign color codes (0xC2 0xA7 prefix in UTF-8).
+std::string stripColorCodes(const std::string &input) {
+    std::string out;
+    out.reserve(input.size());
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        if (static_cast<unsigned char>(input[i]) == 0xC2 &&
+            i + 1 < input.size() &&
+            static_cast<unsigned char>(input[i + 1]) == 0xA7) {
+            i += 2;
+            continue;
+        }
+        out.push_back(input[i]);
+    }
+    return out;
+}
+
 BlockPos feetBlock(const sdk::Vec3 &pos) {
     return {static_cast<int>(std::floor(pos.x)), static_cast<int>(std::floor(pos.y)),
             static_cast<int>(std::floor(pos.z))};
@@ -184,6 +200,7 @@ std::vector<std::string> Bot::executeCommand(const std::string &line) {
         mMineRemaining = count;
         mMinedCount = 0;
         mMineScanCooldown = 0;
+        mExploreTries = 0;
         mGoal.reset();
         mBlacklist.clear();
         mDirectBreakTarget.reset();
@@ -224,11 +241,9 @@ std::vector<std::string> Bot::executeCommand(const std::string &line) {
         mDirectBreakTarget.reset();
         mExecutor.reset();
         mFollowRefreshCooldown = 0;
-        if (args.size() >= 2) {
-            log("follow: name matching needs a verified symbol; following nearest player");
-        }
-        log("following nearest player");
-        return {"following nearest player"};
+        mFollowName = args.size() >= 2 ? toLower(args[1]) : "";
+        log(mFollowName.empty() ? "following nearest player" : "following " + mFollowName);
+        return {mFollowName.empty() ? "following nearest player" : "following " + mFollowName};
     }
 
     if (command == "status") {
@@ -394,6 +409,27 @@ void Bot::adoptPendingScan(const BlockPos &feet) {
     if (!pending || !pending->valid) return;
     mMineScanCooldown = Settings::get().getInt("mineGoalUpdateInterval", 5);
     if (pending->matches.empty()) {
+        if (mMode == Mode::Mine && !mGoal &&
+            Settings::get().getBool("exploreForBlocks", true)) {
+            // exploreForBlocks: head for unexplored ground instead of giving up.
+            if (++mExploreTries > 12) {
+                log("no " + mMineTarget + " found after exploring; stopping");
+                stop();
+                return;
+            }
+            static constexpr int kDirs[8][2] = {{1, 0}, {1, 1}, {0, 1}, {-1, 1},
+                                                {-1, 0}, {-1, -1}, {0, -1}, {1, -1}};
+            const int dist = std::clamp(Settings::get().getInt("mineScanRadius", 24), 4, 64) + 8;
+            const auto &[edx, edz] = kDirs[mExploreTries % 8];
+            Goal goal;
+            goal.type = Goal::Type::XZ;
+            goal.x = feet.x + edx * dist;
+            goal.z = feet.z + edz * dist;
+            mGoal = goal;
+            mExecutor.reset();
+            log("exploring for " + mMineTarget + " (try " + std::to_string(mExploreTries) + ")");
+            return;
+        }
         if (!mGoal) {
             log("no " + mMineTarget + " found within " +
                 std::to_string(std::clamp(Settings::get().getInt("mineScanRadius", 24), 4, 64)) + " blocks");
@@ -401,6 +437,7 @@ void Bot::adoptPendingScan(const BlockPos &feet) {
         }
         return;
     }
+    mExploreTries = 0;
     pickScanGoal(pending->matches, feet);
 }
 
@@ -434,7 +471,7 @@ void Bot::updateFollowGoal(sdk::Player *player) {
     const sdk::ActorVec actors = fetch(player, &extent, sdk::kMobActorTypeFilter);
     if (!actors.begin || !actors.end) {
         if (!mGoal && mFollowTarget == nullptr) {
-            log("no player nearby to follow");
+            log("no matching player nearby to follow");
             mFollowRefreshCooldown = 40;
         }
         return;
@@ -445,12 +482,19 @@ void Bot::updateFollowGoal(sdk::Player *player) {
     for (auto it = actors.begin; it < actors.end; ++it) {
         if (!it->mActor || it->mActor == player) continue;
         if (isPlayer && !isPlayer(it->mActor)) continue;
+        if (!mFollowName.empty()) {
+            const std::string &raw =
+                reinterpret_cast<sdk::Player *>(it->mActor)->name();
+            const std::string name = toLower(stripColorCodes(raw));
+            if (name.find(mFollowName) == std::string::npos) continue;
+        }
         chosen = it->mActor;
-        break; // already distance-sorted: nearest player first
+        break; // already distance-sorted: nearest match first
     }
     if (!chosen) {
         if (!mGoal && mFollowTarget == nullptr) {
-            log("no player nearby to follow");
+            log(mFollowName.empty() ? "no matching player nearby to follow"
+                                    : "player '" + mFollowName + "' not in range");
             mFollowRefreshCooldown = 40;
         }
         return;
@@ -545,6 +589,24 @@ void Bot::onTick(sdk::Player *player) {
 
     if (!World::get().refresh(player->dimension() ? player->dimension()->blockSource() : nullptr)) {
         return;
+    }
+
+    // Teleport / respawn guard: a huge position jump invalidates the path.
+    const sdk::Vec3 currentPos = player->position();
+    {
+        const float dx = currentPos.x - mLastTickPosition.x;
+        const float dy = currentPos.y - mLastTickPosition.y;
+        const float dz = currentPos.z - mLastTickPosition.z;
+        if (mLastTickPosition.x != 0 || mLastTickPosition.y != 0 || mLastTickPosition.z != 0) {
+            if (dx * dx + dy * dy + dz * dz > 50.0f * 50.0f) {
+                log("position jumped, replanning");
+                mExecutor.reset();
+                mGoal.reset();
+                mDirectBreakTarget.reset();
+                mMineScanCooldown = 0;
+            }
+        }
+        mLastTickPosition = currentPos;
     }
 
     adoptPendingPath();

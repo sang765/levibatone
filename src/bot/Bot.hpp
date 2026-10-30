@@ -72,6 +72,9 @@ private:
     int mMineScanCooldown = 0;
     int mFollowRefreshCooldown = 0;
     void *mFollowTarget = nullptr;
+    std::string mFollowName;
+    sdk::Vec3 mLastTickPosition{0, 0, 0};
+    int mExploreTries = 0;
     std::vector<BlockPos> mBlacklist;
     std::optional<BlockPos> mDirectBreakTarget;
     int mDirectBreakTicks = 0;

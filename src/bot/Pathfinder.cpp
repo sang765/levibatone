@@ -197,42 +197,35 @@ MovementCandidate ascendEdge(const World &world, const BlockPos &from, int dx, i
 MovementCandidate descendEdge(const World &world, const BlockPos &from, int dx, int dz, int maxFall) {
     MovementCandidate candidate;
 
-    // Determine how deep we may fall: the first solid block in the column.
-    int maxDepth = 0;
-    while (maxDepth < maxFall) {
-        const World::Class klass = classAt(world, {from.x + dx, from.y - maxDepth - 1, from.z + dz});
-        if (klass == World::Class::Solid || klass == World::Class::Unbreakable) break;
-        if (klass == World::Class::Unknown) return candidate;
-        maxDepth++;
-    }
-    if (maxDepth == 0) return candidate;
-
-    // Every depth with a standable (or liquid) landing is a distinct movement,
-    // like Baritone's fall movements of length 1..n.
-    for (int n = 1; n <= maxDepth; ++n) {
-        const BlockPos dest{from.x + dx, from.y - n, from.z + dz};
-        const BlockPos landing{dest.x, dest.y - 1, dest.z};
-        std::vector<BlockPos> toBreak;
-
-        double cost = clearCost(world, dest, toBreak);
-        if (cost >= kCostInf) continue;
-        cost += clearCost(world, {dest.x, dest.y + 1, dest.z}, toBreak);
-        if (cost >= kCostInf) continue;
-
-        const World::Class landingClass = classAt(world, landing);
-        if (landingClass == World::Class::Liquid) {
-            cost += fallCost(n) + kWalkOneInWater;
-        } else if (landingClass == World::Class::Solid || landingClass == World::Class::Unbreakable) {
-            cost += kWalkOffBlock + fallCost(n) + kCenterAfterFall;
-        } else {
-            continue; // mid-air: the fall would continue further down
+    // Walk down the column: water catches falls from any height, solid ground
+    // only within maxFallHeightNoWater (Baritone's rule).
+    for (int n = 1; n <= 33; ++n) {
+        const World::Class klass = classAt(world, {from.x + dx, from.y - n, from.z + dz});
+        if (klass == World::Class::Unknown || klass == World::Class::Dangerous) return candidate;
+        if (klass == World::Class::Liquid) {
+            candidate.edge.dest = {from.x + dx, from.y - n, from.z + dz};
+            candidate.edge.kind = PathEdge::Kind::Descend;
+            candidate.edge.cost = kWalkOffBlock + fallCost(n) + kWalkOneInWater;
+            return candidate;
         }
-
-        candidate.edge.dest = dest;
-        candidate.edge.kind = PathEdge::Kind::Descend;
-        candidate.edge.toBreak = std::move(toBreak);
-        candidate.edge.cost = cost;
-        return candidate; // deepest valid landing dominates shallower ones
+        if (klass == World::Class::Solid || klass == World::Class::Unbreakable) {
+            const int landing = n - 1; // feet one above this block
+            if (landing < 1 || landing > maxFall) return candidate;
+            const BlockPos dest{from.x + dx, from.y - landing, from.z + dz};
+            std::vector<BlockPos> toBreak;
+            double cost = clearCost(world, dest, toBreak);
+            if (cost >= kCostInf) return candidate;
+            cost += clearCost(world, {dest.x, dest.y + 1, dest.z}, toBreak);
+            if (cost >= kCostInf) return candidate;
+            const World::Class ground = classAt(world, {dest.x, dest.y - 1, dest.z});
+            if (ground != World::Class::Solid && ground != World::Class::Unbreakable) return candidate;
+            candidate.edge.dest = dest;
+            candidate.edge.kind = PathEdge::Kind::Descend;
+            candidate.edge.toBreak = std::move(toBreak);
+            candidate.edge.cost = kWalkOffBlock + fallCost(landing) + kCenterAfterFall;
+            return candidate;
+        }
+        // Air / Passable / Climbable: keep falling.
     }
     return candidate;
 }
