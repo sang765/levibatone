@@ -23,7 +23,7 @@ using sdk::BlockPos;
 // the game thread, and implements the command surface (#goto, #mine, ...).
 class Bot {
 public:
-    enum class Mode { Idle, Goto, GotoBlock, Mine, Follow, Build };
+    enum class Mode { Idle, Goto, GotoBlock, Mine, Farm, Follow, Build, Explore };
 
     struct Message {
         std::string text;

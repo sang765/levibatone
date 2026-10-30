@@ -250,6 +250,11 @@ void Executor::executeEdge(sdk::Player *player, const PathEdge &edge, const sdk:
 
     input.sneak = input.sneak || edge.sneak;
 
+    if (edge.jump && edge.kind == PathEdge::Kind::Walk) {
+        // Parkour: commit to the jump at the edge and hold it over the gap.
+        if (horizontal < 1.4f && mJumpHoldTicks <= 0) mJumpHoldTicks = 10;
+    }
+
     switch (edge.kind) {
     case PathEdge::Kind::Ascend:
         if (!edge.jump) break; // ladder / swim ascend: forward press is enough

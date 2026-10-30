@@ -52,6 +52,9 @@ public:
     // penalized in path cost.
     static bool isValuable(const std::string &fullName);
 
+    // Farmable crops (harvested by the farm process).
+    static bool isCropName(const std::string &fullName);
+
 private:
     World();
 

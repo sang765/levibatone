@@ -168,12 +168,18 @@ MovementCandidate walkEdge(const World &world, const BlockPos &from, int dx, int
     return candidate;
 }
 
-MovementCandidate ascendEdge(const World &world, const BlockPos &from, int dx, int dz) {
+MovementCandidate ascendEdge(const World &world, const BlockPos &from, int dx, int dz, bool diagonal) {
     MovementCandidate candidate;
     const BlockPos dest{from.x + dx, from.y + 1, from.z + dz};
     const BlockPos stepOn{dest.x, dest.y - 1, dest.z};
     std::vector<BlockPos> toBreak;
 
+    if (diagonal) {
+        if (!settings().getBool("allowDiagonalAscend", false)) return candidate;
+        // Both corner columns must be open at the lower level.
+        if (clearCost(world, {from.x + dx, from.y, from.z}, toBreak) >= kCostInf) return candidate;
+        if (clearCost(world, {from.x, from.y, from.z + dz}, toBreak) >= kCostInf) return candidate;
+    }
     if (standOnCost(world, stepOn) >= kCostInf) return candidate;
 
     double cost = clearCost(world, dest, toBreak);
@@ -185,6 +191,7 @@ MovementCandidate ascendEdge(const World &world, const BlockPos &from, int dx, i
     if (cost >= kCostInf) return candidate;
 
     cost += kWalkOneBlock + kJumpOneBlock + settings().getDouble("jumpPenalty", 2.0);
+    if (diagonal) cost += kWalkOneBlock * 0.414;
 
     candidate.edge.dest = dest;
     candidate.edge.kind = PathEdge::Kind::Ascend;
@@ -194,8 +201,15 @@ MovementCandidate ascendEdge(const World &world, const BlockPos &from, int dx, i
     return candidate;
 }
 
-MovementCandidate descendEdge(const World &world, const BlockPos &from, int dx, int dz, int maxFall) {
+MovementCandidate descendEdge(const World &world, const BlockPos &from, int dx, int dz, int maxFall,
+                              bool diagonal) {
     MovementCandidate candidate;
+    if (diagonal) {
+        if (!settings().getBool("allowDiagonalDescend", false)) return candidate;
+        std::vector<BlockPos> toBreak;
+        if (clearCost(world, {from.x + dx, from.y, from.z}, toBreak) >= kCostInf) return candidate;
+        if (clearCost(world, {from.x, from.y, from.z + dz}, toBreak) >= kCostInf) return candidate;
+    }
 
     // Walk down the column: water catches falls from any height, solid ground
     // only within maxFallHeightNoWater (Baritone's rule).
@@ -354,6 +368,52 @@ MovementCandidate bridgeEdge(const World &world, const BlockPos &from, int dx, i
     return candidate;
 }
 
+MovementCandidate parkourEdge(const World &world, const BlockPos &from, int dx, int dz, bool sprint) {
+    MovementCandidate candidate;
+    if (!settings().getBool("allowParkour", false)) return candidate;
+
+    const int maxLen = sprint ? 4 : 3;
+    for (int len = 2; len <= maxLen; ++len) {
+        const BlockPos dest{from.x + dx * len, from.y, from.z + dz * len};
+        const BlockPos landing{dest.x, dest.y - 1, dest.z};
+        std::vector<BlockPos> toBreak;
+
+        // Jump arc clearance over takeoff, gap and landing (head at y+2).
+        bool clear = true;
+        for (int i = 0; i <= len && clear; ++i) {
+            const BlockPos column{from.x + dx * i, from.y, from.z + dz * i};
+            if (i <= len - 1) {
+                // Gap cells (and takeoff) must be open at feet level and the gap
+                // must have no floor below (otherwise traverse/descend applies).
+                const World::Class feet = classAt(world, column);
+                if (i >= 1) {
+                    if (feet != World::Class::Air && feet != World::Class::Passable) clear = false;
+                    const World::Class below = classAt(world, {column.x, column.y - 1, column.z});
+                    if (below == World::Class::Solid || below == World::Class::Unbreakable) clear = false;
+                    if (below == World::Class::Unknown) clear = false;
+                }
+            }
+            if (clearCost(world, {column.x, column.y + 1, column.z}, toBreak) >= kCostInf) clear = false;
+            if (clearCost(world, {column.x, column.y + 2, column.z}, toBreak) >= kCostInf) clear = false;
+        }
+        if (!clear) continue;
+
+        double cost = clearCost(world, dest, toBreak);
+        if (cost >= kCostInf) continue;
+        if (standOnCost(world, landing) >= kCostInf) continue;
+
+        cost += kJumpOneBlock + settings().getDouble("jumpPenalty", 2.0) +
+                (20.0 / 5.612) * static_cast<double>(len + 1);
+        candidate.edge.dest = dest;
+        candidate.edge.kind = PathEdge::Kind::Walk;
+        candidate.edge.jump = true;
+        candidate.edge.toBreak = std::move(toBreak);
+        candidate.edge.cost = cost;
+        return candidate; // longest achievable jump dominates
+    }
+    return candidate;
+}
+
 std::vector<MovementCandidate> successors(const World &world, const BlockPos &pos) {
     static constexpr int kDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
     std::vector<MovementCandidate> result;
@@ -367,10 +427,19 @@ std::vector<MovementCandidate> successors(const World &world, const BlockPos &po
         candidate = walkEdge(world, pos, dx, dz, true);
         if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
 
-        candidate = ascendEdge(world, pos, dx, dz);
+        candidate = ascendEdge(world, pos, dx, dz, false);
         if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
 
-        candidate = descendEdge(world, pos, dx, dz, maxFall);
+        candidate = descendEdge(world, pos, dx, dz, maxFall, false);
+        if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
+
+        candidate = ascendEdge(world, pos, dx, dz, true);
+        if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
+
+        candidate = descendEdge(world, pos, dx, dz, 1, true);
+        if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
+
+        candidate = parkourEdge(world, pos, dx, dz, settings().getBool("allowSprint"));
         if (candidate.cost < kCostInf) result.push_back(std::move(candidate));
     }
 

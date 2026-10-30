@@ -165,6 +165,14 @@ bool World::isBreakable(const BlockPos &pos) const {
     return klass == World::Class::Solid;
 }
 
+bool World::isCropName(const std::string &fullName) {
+    std::string_view view(fullName);
+    const auto colon = view.rfind(':');
+    if (colon != std::string_view::npos) view = view.substr(colon + 1);
+    return isOneOf(view, {"wheat", "carrots", "potatoes", "beetroots", "nether_wart",
+                          "sugar_cane", "cocoa", "sweet_berry_bush"});
+}
+
 bool World::isValuable(const std::string &fullName) {
     std::string_view view(fullName);
     const auto colon = view.rfind(':');

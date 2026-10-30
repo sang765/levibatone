@@ -30,6 +30,10 @@ const std::unordered_map<std::string, std::string> kDefaults{
     {"followRange", "30"},
     {"followUpdateInterval", "10"},
     {"exploreForBlocks", "true"},
+    {"farmReplant", "true"},
+    {"allowParkour", "false"},
+    {"allowDiagonalAscend", "false"},
+    {"allowDiagonalDescend", "false"},
 };
 
 bool parseBool(std::string_view value) {

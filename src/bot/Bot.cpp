@@ -95,8 +95,12 @@ std::string Bot::modeLabel() const {
         return "getto " + mMineTarget;
     case Mode::Mine:
         return "mine " + mMineTarget;
+    case Mode::Farm:
+        return "farm";
     case Mode::Follow:
         return "follow";
+    case Mode::Explore:
+        return "explore";
     case Mode::Build:
         return "build " + mBuildFile + " (" + std::to_string(mBuildCursor) + "/" +
                std::to_string(mBuildCells.size()) + ")";
@@ -241,6 +245,25 @@ std::vector<std::string> Bot::executeCommand(const std::string &line) {
         return {"pathing to nearest " + mMineTarget};
     }
 
+    if (command == "farm") {
+        ++mGeneration;
+        mPendingPath.reset();
+        mPendingScan.reset();
+        mComputing = false;
+        mScanComputing = false;
+        mMode = Mode::Farm;
+        mMineTarget = "crops";
+        mMineScanCooldown = 0;
+        mGoal.reset();
+        mBlacklist.clear();
+        mDirectBreakTarget.reset();
+        mDirectPlaceTarget.reset();
+        mExploreTries = 0;
+        mExecutor.reset();
+        log("farming (breaks crops at any growth stage)");
+        return {"farming crops"};
+    }
+
     if (command == "follow") {
         ++mGeneration;
         mPendingPath.reset();
@@ -283,6 +306,23 @@ std::vector<std::string> Bot::executeCommand(const std::string &line) {
         mMode = Mode::Build;
         log("building " + file + ": " + std::to_string(mBuildCells.size()) + " cells");
         return {"building " + file};
+    }
+
+    if (command == "explore") {
+        ++mGeneration;
+        mPendingPath.reset();
+        mPendingScan.reset();
+        mComputing = false;
+        mScanComputing = false;
+        mMode = Mode::Explore;
+        mGoal.reset();
+        mBlacklist.clear();
+        mDirectBreakTarget.reset();
+        mDirectPlaceTarget.reset();
+        mExecutor.reset();
+        mExploreTries = 0;
+        log("exploring the world");
+        return {"exploring — walks in widening directions"};
     }
 
     if (command == "status") {
@@ -346,16 +386,17 @@ void Bot::adoptPendingPath() {
         return;
     }
 
-    if ((mMode == Mode::Mine || mMode == Mode::GotoBlock) && mGoal) {
+    if ((mMode == Mode::Mine || mMode == Mode::GotoBlock || mMode == Mode::Farm) && mGoal) {
         // blacklistClosestOnFailure: mark this target impossible, try the next.
         mBlacklist.push_back({mGoal->x, mGoal->y, mGoal->z});
         mGoal.reset();
         mMineScanCooldown = 0;
         log("target unreachable, trying next");
-    } else if (mMode == Mode::Follow) {
+    } else if (mMode == Mode::Follow || mMode == Mode::Explore) {
         mGoal.reset();
-        mFollowRefreshCooldown = 0;
-        log("path to player failed, retrying");
+        if (mMode == Mode::Explore) ++mExploreTries;
+        log(mMode == Mode::Explore ? "direction unreachable, trying another"
+                                   : "path to player failed, retrying");
     } else {
         log("no path found");
         stop();
@@ -394,13 +435,14 @@ void Bot::requestScan(const BlockPos &feet) {
     if (mScanComputing.load()) return;
 
     const std::string target = mMineTarget;
+    const bool cropMode = mMode == Mode::Farm;
     std::vector<BlockPos> blacklist = mBlacklist;
     const int radius = std::clamp(Settings::get().getInt("mineScanRadius", 24), 4, 64);
     const int blockBudget = 16000; // hard cap on getBlock calls per scan
     const std::uint32_t generation = mGeneration;
 
     mScanComputing = true;
-    std::thread([this, feet, target, blacklist, radius, blockBudget, generation]() {
+    std::thread([this, feet, target, blacklist, radius, blockBudget, generation, cropMode]() {
         ScanResult result;
         const World &world = World::get();
         int checked = 0;
@@ -413,9 +455,15 @@ void Bot::requestScan(const BlockPos &feet) {
                         const BlockPos pos{feet.x + dx, feet.y + dy, feet.z + dz};
                         const void *block = world.getBlock(pos);
                         if (!block) continue;
-                        if (world.classify(block) != World::Class::Solid) continue;
+                        const World::Class klass = world.classify(block);
+                        const bool harvestable = cropMode
+                                                     ? (klass == World::Class::Passable ||
+                                                        klass == World::Class::Solid)
+                                                     : klass == World::Class::Solid;
+                        if (!harvestable) continue;
                         const std::string *name = static_cast<const sdk::Block *>(block)->fullName();
-                        if (!name || !World::nameMatches(*name, target)) continue;
+                        if (!name) continue;
+                        if (cropMode ? !World::isCropName(*name) : !World::nameMatches(*name, target)) continue;
                         if (std::find(blacklist.begin(), blacklist.end(), pos) != blacklist.end()) continue;
                         result.matches.push_back(pos);
                     }
@@ -448,6 +496,13 @@ void Bot::adoptPendingScan(const BlockPos &feet) {
     if (!pending || !pending->valid) return;
     mMineScanCooldown = Settings::get().getInt("mineGoalUpdateInterval", 5);
     if (pending->matches.empty()) {
+        if (mMode == Mode::Farm) {
+            if (!mGoal) {
+                log("no crops in range");
+                stop();
+            }
+            return;
+        }
         if (mMode == Mode::Mine && !mGoal &&
             Settings::get().getBool("exploreForBlocks", true)) {
             // exploreForBlocks: head for unexplored ground instead of giving up.
@@ -673,6 +728,21 @@ bool Bot::tickDirectPlace(sdk::Player *player) {
     if (!mDirectPlaceTarget) return false;
     const PlaceTask task = *mDirectPlaceTarget;
     const World &world = World::get();
+    if (mMode == Mode::Farm) {
+        // Replant attempt: give it a few ticks, then move on regardless.
+        if (++mDirectPlaceTicks <= 8 && !world.isSolid(task.target)) {
+            void *mode = core::actions.mode();
+            auto startBuild = core::actions.startBuild.load(std::memory_order_acquire);
+            if (mode && startBuild && mExecutor.lookBlock(player, task.click)) {
+                startBuild(mode, &task.click, task.face, 0);
+            }
+            mExecutor.tick(player);
+            return true;
+        }
+        mDirectPlaceTarget.reset();
+        mMineScanCooldown = 0;
+        return true;
+    }
     if (world.isSolid(task.target)) {
         ++mBuildPlaced;
         ++mBuildCursor;
@@ -827,6 +897,9 @@ void Bot::onPathFinished(sdk::Player *player) {
         mGoal.reset();
         mFollowRefreshCooldown = 0;
     }
+    if (mMode == Mode::Explore) {
+        mGoal.reset(); // onTick picks the next direction
+    }
 }
 
 void Bot::onTick(sdk::Player *player) {
@@ -883,7 +956,7 @@ void Bot::onTick(sdk::Player *player) {
 
     const BlockPos feet = feetBlock(player->position());
 
-    if (mMode == Mode::Mine || mMode == Mode::GotoBlock) {
+    if (mMode == Mode::Mine || mMode == Mode::GotoBlock || mMode == Mode::Farm) {
         if (!mExecutor.hasPath() && !mDirectBreakTarget && !mComputing.load() && !mScanComputing.load()) {
             if (mMineScanCooldown > 0) {
                 --mMineScanCooldown;
@@ -894,6 +967,21 @@ void Bot::onTick(sdk::Player *player) {
         if (mPendingScan) adoptPendingScan(feet);
     }
 
+    if (mMode == Mode::Explore) {
+        if (!mExecutor.hasPath() && !mGoal && !mComputing.load()) {
+            static constexpr int kDirs[8][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1},
+                                                {1, 1}, {-1, 1}, {-1, -1}, {1, -1}};
+            const int dist = 128 + 64 * (mExploreTries % 4);
+            const auto &[edx, edz] = kDirs[(mExploreTries + 1) % 8];
+            Goal goal;
+            goal.type = Goal::Type::XZ;
+            goal.x = feet.x + edx * dist;
+            goal.z = feet.z + edz * dist;
+            mGoal = goal;
+            ++mExploreTries;
+        }
+    }
+
     if (mMode == Mode::Follow) {
         if (mFollowRefreshCooldown > 0) {
             --mFollowRefreshCooldown;
@@ -901,6 +989,14 @@ void Bot::onTick(sdk::Player *player) {
             updateFollowGoal(player);
             mFollowRefreshCooldown = Settings::get().getInt("followUpdateInterval", 10);
         }
+    }
+
+    if (mMode == Mode::Farm) {
+        if (mDirectPlaceTarget) {
+            tickDirectPlace(player);
+            return;
+        }
+        if (mDirectBreakTarget) return; // shared direct-break handler below
     }
 
     if (mMode == Mode::Build) {
@@ -926,6 +1022,48 @@ void Bot::onTick(sdk::Player *player) {
     if (mDirectBreakTarget) {
         const BlockPos target = *mDirectBreakTarget;
         const World &world = World::get();
+
+        if (mMode == Mode::Farm) {
+            // Crops are not solid — verify by name, not by isSolid.
+            const void *block = world.getBlock(target);
+            const std::string *name = block ? static_cast<const sdk::Block *>(block)->fullName() : nullptr;
+            if (!name || !World::isCropName(*name)) {
+                mDirectBreakTarget.reset();
+                if (Settings::get().getBool("farmReplant", true) && Settings::get().getBool("allowPlace")) {
+                    const BlockPos below{target.x, target.y - 1, target.z};
+                    if (world.isSolid(below)) {
+                        mDirectPlaceTarget = PlaceTask{target, below, 1};
+                        mDirectPlaceTicks = 0;
+                    }
+                }
+                return;
+            }
+            if (++mDirectBreakTicks > Settings::get().getInt("movementTimeoutTicks", 100)) {
+                mBlacklist.push_back(target);
+                mDirectBreakTarget.reset();
+                mGoal.reset();
+                mMineScanCooldown = 0;
+                return;
+            }
+            const sdk::Vec3 eye{player->position().x, player->position().y + kEyeHeight, player->position().z};
+            const sdk::Vec3 center = sdk::blockCenter(target);
+            const float fdx = center.x - eye.x, fdy = center.y - eye.y, fdz = center.z - eye.z;
+            const float reach = std::sqrt(fdx * fdx + fdy * fdy + fdz * fdz);
+            void *mode = core::actions.mode();
+            auto startDestroy = core::actions.startDestroy.load(std::memory_order_acquire);
+            if (reach <= static_cast<float>(kBlockReach) && mode && startDestroy) {
+                const float ax = std::abs(fdx), ay = std::abs(fdy), az = std::abs(fdz);
+                std::uint8_t face = 0;
+                if (ay >= ax && ay >= az) face = fdy > 0 ? 1 : 0;
+                else if (az >= ax) face = fdz > 0 ? 3 : 2;
+                else face = fdx > 0 ? 5 : 4;
+                bool destroyed = false;
+                mExecutor.lookBlock(player, target);
+                startDestroy(mode, &target, face, &destroyed);
+            }
+            mExecutor.tick(player);
+            return;
+        }
 
         if (!world.isSolid(target)) {
             if (mMode == Mode::Build) {

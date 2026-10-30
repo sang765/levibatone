@@ -9,7 +9,7 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 - **getto** — path to the nearest block of a type without breaking it (`getto <block>`)
 - **follow** — follow the nearest player (`follow`) or a player by name (`follow <name>`, matched against the player list name, color codes stripped)
 - **build** — place and clear cells from a Bedrock `.mcstructure` or a Java `.litematic` (name-matched, block states ignored): put the file in the mod `data/` folder, stand where the structure origin should be, `!build <file>`. Holds your selected item for placement; breaks wrong blocks itself; bottom-up order
-- **Movements** — walk, diagonal (corner-cut safe), ascend (jump), fall (≤ 3 blocks, land in water allowed), mine-down, pillar (place under feet), bridge (sneak-place over gaps with a safe landing below), ladder up/down, swim up
+- **Movements** — walk, diagonal (corner-cut safe), ascend (jump), fall (water landing at any depth, solid ≤ `maxFallHeightNoWater`), mine-down, pillar (place under feet), bridge (sneak-place over gaps with a safe landing below), ladder up/down, swim up, parkour (2-4 block jumps, `allowParkour`), diagonal ascend/descend (`allowDiagonalAscend`/`allowDiagonalDescend`)
 - **Block interaction** — breaks and places blocks through the game's own GameMode functions, honoring `allowBreak` / `allowPlace`
 - **Costs** — Baritone's exact ActionCosts model (walk 20/4.317, jump = fall(1.25) − fall(0.25), fall simulation, placement/break/jump penalties) and the 3.563 cost heuristic
 - **HUD** — status overlay (mode, path progress, mined count, messages) plus a floating STOP button
@@ -32,6 +32,8 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 | `getto <block>` | Walk to the nearest block of a type without mining it |
 | `follow` | Follow the nearest player (keep `followRadius` distance) |
 | `follow <name>` | Follow the player whose name contains `<name>` |
+| `farm` | Harvest crops in range and replant (needs the seed held for replanting) |
+| `explore` | Walk in widening directions across unexplored terrain |
 | `build <name.mcstructure>` | Build a Bedrock structure from the mod `data/` folder at your position |
 | `build <name.litematic>` | Build a Java Litematica schematic (gzip NBT, palette auto-mapped to Bedrock names) |
 | `stop` / `cancel` | Cancel the bot |
@@ -41,7 +43,7 @@ A Baritone-style pathfinding bot for **Minecraft: Bedrock Edition**, packaged as
 
 ## Settings (defaults = Baritone)
 
-`allowBreak=true`, `allowPlace=true`, `allowSprint=true`, `allowDownward=true`, `maxFallHeightNoWater=3`, `costHeuristic=3.563`, `blockPlacementPenalty=20`, `blockBreakAdditionalPenalty=2`, `jumpPenalty=2`, `walkOnWaterOnePenalty=3`, `mineGoalUpdateInterval=5`, `movementTimeoutTicks=100`, `maxNodes=15000`, `primaryTimeoutMs=300`, `failureTimeoutMs=1500`, `mineScanRadius=24`, `followRadius=3`, `followRange=30`, `followUpdateInterval=10`, `exploreForBlocks=true`
+`allowBreak=true`, `allowPlace=true`, `allowSprint=true`, `allowDownward=true`, `maxFallHeightNoWater=3`, `costHeuristic=3.563`, `blockPlacementPenalty=20`, `blockBreakAdditionalPenalty=2`, `jumpPenalty=2`, `walkOnWaterOnePenalty=3`, `mineGoalUpdateInterval=5`, `movementTimeoutTicks=100`, `maxNodes=15000`, `primaryTimeoutMs=300`, `failureTimeoutMs=1500`, `mineScanRadius=24`, `followRadius=3`, `followRange=30`, `followUpdateInterval=10`, `exploreForBlocks=true`, `farmReplant=true`, `allowParkour=false`, `allowDiagonalAscend=false`, `allowDiagonalDescend=false`
 
 ## Build
 
@@ -68,7 +70,7 @@ Target: **Minecraft 1.26.6X** (arm64-v8a, `1.26.6*`) via LeviLauncher. All signa
 
 ## Not ported (yet)
 
-Baritone has far more than the core; the remaining pieces are intentionally out of scope: autotool (needs a verified hotbar selected-slot offset — guessing corrupts inventory), world-space path rendering (needs verified ViewProj matrix sources), chunk caching (not applicable: a client-side bot can only path inside loaded chunks), plus farm and elytra. The builder places the currently held item, not a per-cell palette — swap items manually for multi-material builds. `mine` auto-explores toward unexplored ground when no target is in range (`exploreForBlocks`, up to 12 attempts). Settings persist to `config/settings.txt`.
+Baritone has far more than the core; the remaining pieces are intentionally out of scope: elytra flight (needs verified flight/pitch control — a wrong guess kills the player repeatedly), autotool (needs a verified hotbar selected-slot offset — guessing corrupts inventory), world-space path rendering (needs verified ViewProj matrix sources), and chunk caching (not applicable: a client-side bot can only path inside loaded chunks). The builder places the currently held item, not a per-cell palette — swap items manually for multi-material builds. Crops are harvested at any growth stage (block growth states are not read). `mine` auto-explores toward unexplored ground when no target is in range (`exploreForBlocks`, up to 12 attempts). Settings persist to `config/settings.txt`.
 
 ## Credits
 
