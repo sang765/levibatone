@@ -28,7 +28,7 @@ target("levibatone")
     if is_plat("android") then
         add_cxflags("-fPIC", "-O2", "-ffunction-sections", "-fdata-sections", "-fexceptions", "-w")
         add_cxxflags("-fno-rtti")
-        add_shflags("-Wl,--gc-sections", "-Wl,--hash-style=gnu", "-Wl,-z,max-page-size=16384")
+        add_shflags("-Wl,--gc-sections", "-Wl,--hash-style=gnu", "-Wl,-z,max-page-size=16384", "-Wl,--no-undefined")
         add_links("android", "log")
     end
 

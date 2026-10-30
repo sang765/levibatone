@@ -3,3 +3,4 @@ third_party/
 *.levipack
 *.so
 .local/
+verify/mc/

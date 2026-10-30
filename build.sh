@@ -34,6 +34,15 @@ done
 SOURCES=$(find src -name '*.cpp' | sort)
 
 mkdir -p "$OUT_DIR"
+
+# Stub preloader: the mod links DT_NEEDED libpreloader.so, which the runtime
+# linker resolves to the launcher's already-loaded libpreloader.so (same
+# soname, loaded by ModManager.ensurePreloaderLoaded before mods).
+printf 'void __levibatone_preloader_stub(void) {}\n' > "$OUT_DIR/preloader_stub.cpp"
+clang++ -std=c++20 -shared -fPIC -O0 -w \
+    -Wl,-soname,libpreloader.so \
+    -o "$OUT_DIR/libpreloader.so" "$OUT_DIR/preloader_stub.cpp"
+
 clang++ -std=c++20 -shared -fPIC -O2 -w \
     -fno-rtti -fexceptions \
     -fvisibility=hidden -fvisibility-inlines-hidden \
@@ -44,11 +53,19 @@ clang++ -std=c++20 -shared -fPIC -O2 -w \
     -Ithird_party/entt/src \
     -I"$PRELOADER_INCLUDE" \
     $SOURCES \
+    -L"$OUT_DIR" -lpreloader \
     -llog \
     -Wl,--gc-sections \
     -Wl,--unresolved-symbols=ignore-all \
     -Wl,-z,max-page-size=16384 \
     -o "$OUT_DIR/$SO_NAME"
+
+# Own symbols must all be defined; only preloader/system symbols may stay UND.
+if readelf --dyn-syms -W "$OUT_DIR/$SO_NAME" | awk '$7=="UND" {print $8}' | grep -q levibatone; then
+    echo "error: undefined levibatone symbols:" >&2
+    readelf --dyn-syms -W "$OUT_DIR/$SO_NAME" | awk '$7=="UND" {print $8}' | grep levibatone >&2
+    exit 1
+fi
 
 echo "built $OUT_DIR/$SO_NAME"
 

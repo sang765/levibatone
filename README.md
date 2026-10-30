@@ -56,7 +56,7 @@ Produces `build/liblevibatone.so` and `build/LeviBatone.levipack`.
 
 ## Compatibility
 
-Target: **Minecraft 1.26.60** (arm64-v8a) via LeviLauncher. Signatures and offsets come from the BedrockTools 1.26.60 SDK layer; other Minecraft versions are not covered by `minecraft_versions: ["1.26.60.X"]`.
+Target: **Minecraft 1.26.60** (arm64-v8a) via LeviLauncher. All signature patterns were verified to resolve uniquely against a real 1.26.60.4 `libminecraftpe.so` with `verify/scan_fast.py` (point it at the extracted game library). Signatures and offsets come from the BedrockTools 1.26.60 SDK layer; other Minecraft versions are not covered by `minecraft_versions: ["1.26.60.X"]`.
 
 ## Not ported (yet)
 

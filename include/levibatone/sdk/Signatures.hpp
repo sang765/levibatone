@@ -7,7 +7,6 @@
 namespace levibatone::memory {
 
 enum class SignatureId : std::uint16_t {
-    VersionString,
     NormalTick,
     ClientInstanceUpdate,
     ClientInstanceGetLocalPlayer,
@@ -25,7 +24,6 @@ enum class SignatureId : std::uint16_t {
     SurvivalModeInteract,
     BlockSourceGetBlock,
     LocalPlayerApplyTurnDelta,
-    GuiDataDisplayClientMessage,
     Count,
 };
 
